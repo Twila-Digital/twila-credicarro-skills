@@ -1,0 +1,40 @@
+name: Lint
+
+on:
+  push:
+    branches: [production]
+  pull_request:
+    branches: [production]
+
+permissions:
+  contents: read
+
+jobs:
+  markdown-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Check internal links
+        run: npx --yes markdown-link-check@3.15.0 --config .github/markdown-link-check.json $(git ls-files '*.md' | grep -v -E '^SKILL-(CONSOLIDATED|AGENT)\.md$')
+
+  generated-up-to-date:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Rebuild SKILL-CONSOLIDATED.md and SKILL-AGENT.md and diff
+        run: |
+          node scripts/build-consolidated.mjs
+          if ! git diff --exit-code SKILL-CONSOLIDATED.md SKILL-AGENT.md; then
+            echo "::error::SKILL-CONSOLIDATED.md ou SKILL-AGENT.md está desatualizado — rode 'node scripts/build-consolidated.mjs' e commit o resultado."
+            exit 1
+          fi

@@ -1,0 +1,11 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^mailto:" },
+    { "pattern": "^https://(www\\.)?credicarro\\.com\\.br" },
+    { "pattern": "^https://github\\.com/Twila-Digital/twila-credicarro-" }
+  ],
+  "retryOn429": true,
+  "retryCount": 3,
+  "timeout": "20s",
+  "aliveStatusCodes": [200, 206, 429]
+}
