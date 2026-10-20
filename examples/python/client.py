@@ -37,12 +37,16 @@ def _build_client() -> CredicarroClient:
     # Sem base_url nem environment, o padrão do SDK é PRODUÇÃO. Os exemplos usam staging, a menos que
     # CREDICARRO_BASE_URL (https) diga o contrário.
     if base_url:
-        return CredicarroClient(CredicarroClientOptions(client_id=client_id, client_secret=client_secret, base_url=base_url))
+        return CredicarroClient(
+            CredicarroClientOptions(client_id=client_id, client_secret=client_secret, base_url=base_url)
+        )
 
     # Os padrões de resiliência já são bons (30 s no total, 10 s por tentativa, 3 tentativas, circuit breaker).
     # Só ajuste com motivo: CredicarroClientOptions(..., resilience=CredicarroResilienceOptions(max_retry_attempts=4)).
     return CredicarroClient(
-        CredicarroClientOptions(client_id=client_id, client_secret=client_secret, environment=CredicarroEnvironment.STAGING)
+        CredicarroClientOptions(
+            client_id=client_id, client_secret=client_secret, environment=CredicarroEnvironment.STAGING
+        )
     )
 
 

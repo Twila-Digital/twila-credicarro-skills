@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from twila_credicarro import (
     CreateFinancingSimulationRequest,
     CreateFinancingSimulationV1Request,
@@ -45,7 +43,9 @@ def simulate_financing(cpf: str, license_plate: str) -> list[SimulationOption]:
 
 def simulate_refinancing(cpf: str, license_plate: str) -> list[SimulationOption]:
     return client.simulations.create_refinancing(
-        CreateRefinancingSimulationRequest(cpf=cpf, license_plate=license_plate, requested_amount=20000, store_cnpj=LOJA_CNPJ)
+        CreateRefinancingSimulationRequest(
+            cpf=cpf, license_plate=license_plate, requested_amount=20000, store_cnpj=LOJA_CNPJ
+        )
     )
 
 
@@ -57,7 +57,7 @@ def describe_options(options: list[SimulationOption]) -> list[str]:
     ]
 
 
-def pick_by_term(options: list[SimulationOption], term: int) -> Optional[SimulationOption]:
+def pick_by_term(options: list[SimulationOption], term: int) -> SimulationOption | None:
     """A opção escolhida pelo cliente: o `simulation_id` dela cria a proposta (cada opção gera uma única proposta)."""
     return next((o for o in options if o.term == term), None)
 

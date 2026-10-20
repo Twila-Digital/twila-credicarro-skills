@@ -7,7 +7,6 @@ from typing import Callable
 from twila_credicarro import (
     CreateProposalRequest,
     DepositAccount,
-    DepositAccountType,
     DocumentFile,
     DocumentType,
     ListRequest,
@@ -64,7 +63,10 @@ def new_pending_upload(
 
 
 def send_pending_upload(pending: PendingUpload) -> None:
-    """Pode ser chamado de novo com o MESMO `PendingUpload` (queda, reinício): a chave guardada evita envio duplicado."""
+    """Pode ser chamado de novo com o MESMO `PendingUpload` (queda, reinício).
+
+    A chave guardada evita envio duplicado.
+    """
     file = DocumentFile.from_file(pending.file_path)  # valida nome, extensão, tamanho (10 MiB) e Base64
     client.proposals.upload_document(
         pending.proposal_id,

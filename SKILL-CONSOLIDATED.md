@@ -5765,12 +5765,16 @@ def _build_client() -> CredicarroClient:
     # Sem base_url nem environment, o padrão do SDK é PRODUÇÃO. Os exemplos usam staging, a menos que
     # CREDICARRO_BASE_URL (https) diga o contrário.
     if base_url:
-        return CredicarroClient(CredicarroClientOptions(client_id=client_id, client_secret=client_secret, base_url=base_url))
+        return CredicarroClient(
+            CredicarroClientOptions(client_id=client_id, client_secret=client_secret, base_url=base_url)
+        )
 
     # Os padrões de resiliência já são bons (30 s no total, 10 s por tentativa, 3 tentativas, circuit breaker).
     # Só ajuste com motivo: CredicarroClientOptions(..., resilience=CredicarroResilienceOptions(max_retry_attempts=4)).
     return CredicarroClient(
-        CredicarroClientOptions(client_id=client_id, client_secret=client_secret, environment=CredicarroEnvironment.STAGING)
+        CredicarroClientOptions(
+            client_id=client_id, client_secret=client_secret, environment=CredicarroEnvironment.STAGING
+        )
     )
 
 
@@ -5825,8 +5829,6 @@ def collect_all(fetch_page: Callable[[ListRequest], PagedResult[T]], page_size: 
 ```python
 from __future__ import annotations
 
-from typing import Optional
-
 from twila_credicarro import (
     CreateCustomerRequest,
     CredicarroApiError,
@@ -5862,7 +5864,7 @@ def upsert_customer(request: UpsertCustomerRequest = CADASTRO) -> str:
     return client.customers.upsert(request)  # id_cliente
 
 
-def create_customer_only(request: UpsertCustomerRequest, idempotency_key: str) -> Optional[str]:
+def create_customer_only(request: UpsertCustomerRequest, idempotency_key: str) -> str | None:
     """Com chave explícita: SÓ CRIA (CPF existente => 409 Cpf.CpfAlreadyAdded) e a chamada passa a ser repetida
     com a mesma chave."""
     try:
@@ -5899,8 +5901,6 @@ def update_professional_data(cpf: str, data: ProfessionalData) -> None:
 ### Simulations
 ```python
 from __future__ import annotations
-
-from typing import Optional
 
 from twila_credicarro import (
     CreateFinancingSimulationRequest,
@@ -5945,7 +5945,9 @@ def simulate_financing(cpf: str, license_plate: str) -> list[SimulationOption]:
 
 def simulate_refinancing(cpf: str, license_plate: str) -> list[SimulationOption]:
     return client.simulations.create_refinancing(
-        CreateRefinancingSimulationRequest(cpf=cpf, license_plate=license_plate, requested_amount=20000, store_cnpj=LOJA_CNPJ)
+        CreateRefinancingSimulationRequest(
+            cpf=cpf, license_plate=license_plate, requested_amount=20000, store_cnpj=LOJA_CNPJ
+        )
     )
 
 
@@ -5957,7 +5959,7 @@ def describe_options(options: list[SimulationOption]) -> list[str]:
     ]
 
 
-def pick_by_term(options: list[SimulationOption], term: int) -> Optional[SimulationOption]:
+def pick_by_term(options: list[SimulationOption], term: int) -> SimulationOption | None:
     """A opção escolhida pelo cliente: o `simulation_id` dela cria a proposta (cada opção gera uma única proposta)."""
     return next((o for o in options if o.term == term), None)
 
@@ -6004,7 +6006,6 @@ from typing import Callable
 from twila_credicarro import (
     CreateProposalRequest,
     DepositAccount,
-    DepositAccountType,
     DocumentFile,
     DocumentType,
     ListRequest,
@@ -6061,7 +6062,10 @@ def new_pending_upload(
 
 
 def send_pending_upload(pending: PendingUpload) -> None:
-    """Pode ser chamado de novo com o MESMO `PendingUpload` (queda, reinício): a chave guardada evita envio duplicado."""
+    """Pode ser chamado de novo com o MESMO `PendingUpload` (queda, reinício).
+
+    A chave guardada evita envio duplicado.
+    """
     file = DocumentFile.from_file(pending.file_path)  # valida nome, extensão, tamanho (10 MiB) e Base64
     client.proposals.upload_document(
         pending.proposal_id,
@@ -6135,10 +6139,9 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
-from typing import Callable, Optional
+from typing import Callable
 
 from flask import Flask, Response, request  # pip install flask
-
 from twila_credicarro import (
     CreateWebhookRequest,
     CredicarroWebhookSignatureError,
@@ -6160,7 +6163,7 @@ from client import client, describe_error
 
 
 def register_proposal_webhook(
-    url: str, save_secret: Callable[[str], None], basic_credential_base64: Optional[str] = None
+    url: str, save_secret: Callable[[str], None], basic_credential_base64: str | None = None
 ) -> str:
     """Cadastra o webhook de proposta. O `signing_secret` só vem nesta resposta: `save_secret` deve gravá-lo no cofre
     de segredos ANTES de qualquer outra coisa. A rota não é repetida pelo SDK; se der timeout, liste antes de cadastrar
@@ -6185,7 +6188,9 @@ def list_webhooks() -> PagedResult[Webhook]:
 
 
 def deactivate_webhook(webhook_id: str, url: str) -> None:
-    client.webhooks.update(webhook_id, UpdateWebhookRequest(type=WebhookType.PROPOSAL, url=url, status=WebhookStatus.INACTIVE))
+    client.webhooks.update(
+        webhook_id, UpdateWebhookRequest(type=WebhookType.PROPOSAL, url=url, status=WebhookStatus.INACTIVE)
+    )
 
 
 def delete_webhook(webhook_id: str) -> None:
@@ -6242,7 +6247,7 @@ def process_proposal(proposal_id: str) -> None:
     print(f"proposta {proposal.id}: status {proposal.status_name} | ações pendentes: {len(actions)}")
 
 
-def _log_failure(proposal_id: str, future: "Future[None]") -> None:
+def _log_failure(proposal_id: str, future: Future[None]) -> None:
     error = future.exception()
     if error is not None:  # sem PII: só o id da proposta e o tipo do erro; sem isto o executor engole a exceção
         print(f"falha ao processar webhook | Proposta: {proposal_id} | {describe_error(error)}")
@@ -7566,10 +7571,11 @@ Leia a base URL e as credenciais de configuração, nunca do código:
 
 ```bash
 CREDICARRO_ENVIRONMENT=staging
-CREDICARRO_CLIENT_ID=<client-id-do-staging>
-CREDICARRO_CLIENT_SECRET=<client-secret-do-staging>
-CREDICARRO_WEBHOOK_SECRET=<segredo_assinatura-do-webhook-do-staging>
-CREDICARRO_WEBHOOK_AUTHORIZATION=<"Bearer <credencial>" ou "Basic <credencial>", o mesmo cadastrado no webhook>
+CREDICARRO_CLIENT_ID='<client-id-do-staging>'
+CREDICARRO_CLIENT_SECRET='<client-secret-do-staging>'
+CREDICARRO_WEBHOOK_SECRET='<segredo_assinatura-do-webhook-do-staging>'
+# "Bearer <credencial>" ou "Basic <credencial>": o mesmo valor cadastrado no webhook
+CREDICARRO_WEBHOOK_AUTHORIZATION='Bearer <credencial>'
 ```
 
 | Variável | Uso | Ausente |

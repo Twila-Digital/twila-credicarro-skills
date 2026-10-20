@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from twila_credicarro import (
     CreateCustomerRequest,
     CredicarroApiError,
@@ -37,7 +35,7 @@ def upsert_customer(request: UpsertCustomerRequest = CADASTRO) -> str:
     return client.customers.upsert(request)  # id_cliente
 
 
-def create_customer_only(request: UpsertCustomerRequest, idempotency_key: str) -> Optional[str]:
+def create_customer_only(request: UpsertCustomerRequest, idempotency_key: str) -> str | None:
     """Com chave explícita: SÓ CRIA (CPF existente => 409 Cpf.CpfAlreadyAdded) e a chamada passa a ser repetida
     com a mesma chave."""
     try:

@@ -5,10 +5,9 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
-from typing import Callable, Optional
+from typing import Callable
 
 from flask import Flask, Response, request  # pip install flask
-
 from twila_credicarro import (
     CreateWebhookRequest,
     CredicarroWebhookSignatureError,
@@ -30,7 +29,7 @@ from client import client, describe_error
 
 
 def register_proposal_webhook(
-    url: str, save_secret: Callable[[str], None], basic_credential_base64: Optional[str] = None
+    url: str, save_secret: Callable[[str], None], basic_credential_base64: str | None = None
 ) -> str:
     """Cadastra o webhook de proposta. O `signing_secret` só vem nesta resposta: `save_secret` deve gravá-lo no cofre
     de segredos ANTES de qualquer outra coisa. A rota não é repetida pelo SDK; se der timeout, liste antes de cadastrar
@@ -55,7 +54,9 @@ def list_webhooks() -> PagedResult[Webhook]:
 
 
 def deactivate_webhook(webhook_id: str, url: str) -> None:
-    client.webhooks.update(webhook_id, UpdateWebhookRequest(type=WebhookType.PROPOSAL, url=url, status=WebhookStatus.INACTIVE))
+    client.webhooks.update(
+        webhook_id, UpdateWebhookRequest(type=WebhookType.PROPOSAL, url=url, status=WebhookStatus.INACTIVE)
+    )
 
 
 def delete_webhook(webhook_id: str) -> None:
@@ -112,7 +113,7 @@ def process_proposal(proposal_id: str) -> None:
     print(f"proposta {proposal.id}: status {proposal.status_name} | ações pendentes: {len(actions)}")
 
 
-def _log_failure(proposal_id: str, future: "Future[None]") -> None:
+def _log_failure(proposal_id: str, future: Future[None]) -> None:
     error = future.exception()
     if error is not None:  # sem PII: só o id da proposta e o tipo do erro; sem isto o executor engole a exceção
         print(f"falha ao processar webhook | Proposta: {proposal_id} | {describe_error(error)}")

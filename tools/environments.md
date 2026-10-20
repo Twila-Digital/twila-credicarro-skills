@@ -17,10 +17,11 @@ Leia a base URL e as credenciais de configuração, nunca do código:
 
 ```bash
 CREDICARRO_ENVIRONMENT=staging
-CREDICARRO_CLIENT_ID=<client-id-do-staging>
-CREDICARRO_CLIENT_SECRET=<client-secret-do-staging>
-CREDICARRO_WEBHOOK_SECRET=<segredo_assinatura-do-webhook-do-staging>
-CREDICARRO_WEBHOOK_AUTHORIZATION=<"Bearer <credencial>" ou "Basic <credencial>", o mesmo cadastrado no webhook>
+CREDICARRO_CLIENT_ID='<client-id-do-staging>'
+CREDICARRO_CLIENT_SECRET='<client-secret-do-staging>'
+CREDICARRO_WEBHOOK_SECRET='<segredo_assinatura-do-webhook-do-staging>'
+# "Bearer <credencial>" ou "Basic <credencial>": o mesmo valor cadastrado no webhook
+CREDICARRO_WEBHOOK_AUTHORIZATION='Bearer <credencial>'
 ```
 
 | Variável | Uso | Ausente |
