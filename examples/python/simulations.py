@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from twila_credicarro import (
+    CommissionReturn,
     CreateFinancingSimulationRequest,
     CreateFinancingSimulationV1Request,
     CreateRefinancingSimulationRequest,
@@ -26,6 +27,11 @@ def refinancing_range(license_plate: str) -> list[RefinancingRangeOption]:
     return client.simulations.get_refinancing_range(license_plate, LOJA_CNPJ)  # [term, minimum_amount, maximum_amount]
 
 
+def commission_returns() -> list[CommissionReturn]:
+    """Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar commission_return."""
+    return client.simulations.get_commission_returns(LOJA_CNPJ)
+
+
 def simulate_financing(cpf: str, license_plate: str) -> list[SimulationOption]:
     """Uma opção por prazo elegível. O cliente precisa estar cadastrado. O SDK envia a Idempotency-Key sozinho."""
     return client.simulations.create_financing(
@@ -37,6 +43,7 @@ def simulate_financing(cpf: str, license_plate: str) -> list[SimulationOption]:
             state="SP",
             is_zero_km=False,
             store_cnpj=LOJA_CNPJ,
+            # commission_return=2,  # opcional, dentro da faixa de commission_returns()
         )
     )
 

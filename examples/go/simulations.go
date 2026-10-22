@@ -27,6 +27,11 @@ func refinancingRange(ctx context.Context, client *credicarro.Client, plate stri
 	return client.Simulations.GetRefinancingRange(ctx, plate, exampleStoreCnpj)
 }
 
+// commissionReturns consulta a faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar CommissionReturn.
+func commissionReturns(ctx context.Context, client *credicarro.Client) ([]credicarro.CommissionReturn, error) {
+	return client.Simulations.GetCommissionReturns(ctx, exampleStoreCnpj)
+}
+
 // simulateFinancing devolve uma opção por prazo elegível. O SDK envia a Idempotency-Key sozinho (a mesma em todas as tentativas).
 func simulateFinancing(ctx context.Context, client *credicarro.Client) (credicarro.SimulationOption, error) {
 	options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinancingSimulationRequest{
@@ -37,6 +42,7 @@ func simulateFinancing(ctx context.Context, client *credicarro.Client) (credicar
 		State:         "SP",
 		IsZeroKm:      false,
 		StoreCnpj:     exampleStoreCnpj,
+		// CommissionReturn: &retorno, // opcional, dentro da faixa de GetCommissionReturns
 	})
 	if err != nil || len(options) == 0 {
 		return credicarro.SimulationOption{}, err

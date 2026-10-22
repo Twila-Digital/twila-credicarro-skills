@@ -6,7 +6,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 
 ```python
 from twila_credicarro import (
-    FinancingRangeOption, RefinancingRangeOption,
+    FinancingRangeOption, RefinancingRangeOption, CommissionReturn, CommissionReturnType, CommissionReturnTarget,
     CreateFinancingSimulationRequest, CreateRefinancingSimulationRequest,
     CreateFinancingSimulationV1Request, CreateRefinancingSimulationV1Request,
     SimulationOption, Simulation, SimulationType,
@@ -18,15 +18,25 @@ class FinancingRangeOption: term: int; minimum_down_payment: float
 class RefinancingRangeOption: term: int; minimum_amount: float; maximum_amount: float
 
 @dataclass(frozen=True)
+class CommissionReturn:
+    type: CommissionReturnType          # FINANCING | REFINANCING | UNKNOWN
+    target: CommissionReturnTarget      # STORE | ORGANIZATION | UNKNOWN
+    minimum_return: int; maximum_return: int
+    allow_default_rate: bool            # loja aceita simular sem informar commission_return
+
+@dataclass(frozen=True)
 class CreateFinancingSimulationRequest:
     cpf: str; license_plate: str; vehicle_amount: float
     down_payment: float        # pode ser 0, mas precisa deixar >= 10% do veículo para financiar
     state: str                 # UF com 2 letras
     is_zero_km: bool
     store_cnpj: str            # formatado ou só números
+    commission_return: Optional[int] = None  # retornoComissao: opcional, dentro da faixa de get_commission_returns
 @dataclass(frozen=True)
-class CreateRefinancingSimulationRequest: cpf: str; license_plate: str; requested_amount: float; store_cnpj: str
-# V1: os mesmos campos, sem store_cnpj
+class CreateRefinancingSimulationRequest:
+    cpf: str; license_plate: str; requested_amount: float; store_cnpj: str
+    commission_return: Optional[int] = None
+# V1: os mesmos campos, sem store_cnpj nem commission_return
 #   CreateFinancingSimulationV1Request(cpf, license_plate, vehicle_amount, down_payment, state, is_zero_km)
 #   CreateRefinancingSimulationV1Request(cpf, license_plate, requested_amount)
 
@@ -59,6 +69,7 @@ class Simulation:
 class SimulationsClient:   # client.simulations
     def get_financing_range(self, license_plate: str, store_cnpj: str) -> list[FinancingRangeOption]: ...     # GET v2/proposal/simulation/range/financing
     def get_refinancing_range(self, license_plate: str, store_cnpj: str) -> list[RefinancingRangeOption]: ... # GET v2/proposal/simulation/range/refinancing
+    def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...                          # GET v2/proposal/simulation/commission-returns
     def create_financing(self, request: CreateFinancingSimulationRequest) -> list[SimulationOption]: ...       # POST v2/proposal/simulation/financing
     def create_refinancing(self, request: CreateRefinancingSimulationRequest) -> list[SimulationOption]: ...   # POST v2/proposal/simulation/refinancing
     def get(self, simulation_id: Identifier) -> Simulation: ...                                                # GET v1/proposal/simulation/{id}
@@ -79,12 +90,14 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 - As rotas v1 (`client.v1.simulations`) não têm `store_cnpj`: a loja de integração é a vinculada ao parceiro. Prefira as rotas v2; use a v1 só em integrações antigas. Numa integração v1, crie e consulte a proposta por `client.v1.proposals`.
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult[Simulation]`).
 - Mostre o CET (`monthly_cet`, `annual_cet`) ao cliente: é o número certo para comparar opções.
+- `commission_return` (`retornoComissao`) é opcional: consulte a faixa aceita com `get_commission_returns(store_cnpj)` antes de informar um valor. Omitido, usa a taxa padrão (quando a loja permitir, ver `allow_default_rate`). Só existe nas rotas v2.
 
 ## Exemplo
 (Fonte: `examples/python/simulations.py`)
 
 ```python
 faixa = client.simulations.get_financing_range("ABC1D23", "11.222.333/0001-81")
+retornos = client.simulations.get_commission_returns("11.222.333/0001-81")  # faixa aceita em commission_return
 
 opcoes = client.simulations.create_financing(
     CreateFinancingSimulationRequest(
@@ -111,4 +124,5 @@ opcoes_v1 = client.v1.simulations.create_refinancing(
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `error_code`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disable_automatic_idempotency_key` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.UNKNOWN` se a API ganhar um tipo novo; não lance erro.
+- `commission_return` inválido: `422 Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo), `422 Store.CommissionReturn.OutOfRange` (fora da faixa) ou `400 Validation.Amount.MustNotBeNegative` (valor negativo).
 - Campos de `Simulation` podem ser `None`: não assuma que `vehicle`, `iof` ou `cet` estão sempre presentes.

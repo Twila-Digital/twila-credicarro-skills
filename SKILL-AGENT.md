@@ -202,6 +202,13 @@ Resposta: `{"opcoes_por_prazo": [{"prazo": 36, "valor_minimo_refinanciavel": 500
 
 Sem prazos para o veículo, as duas faixas retornam `422` `Simulation.Terms.Unavailable`.
 
+**Consultar retornos de comissão disponíveis (opcional, antes de simular)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v2/proposal/simulation/commission-returns?cnpjLoja=11222333000181" | jq
+```
+Resposta: `{"retornos_comissao": [{"tipo": "Financing", "alvo": "Store", "retorno_minimo": 0, "retorno_maximo": 6, "permite_taxa_padrao": true}, ...]}` — um item por tipo (`Financing`/`Refinancing`) que a loja tiver configurado. Use um valor dentro de `retorno_minimo`..`retorno_maximo` em `retornoComissao` ao simular. Se a loja não tiver nenhum item de um tipo, não envie `retornoComissao` nesse tipo (ver abaixo).
+
 **Simular financiamento**
 ```bash
 CHAVE=$(uuidgen)   # guarde para repetir esta mesma simulação
@@ -215,10 +222,11 @@ curl -s -X POST "$CREDICARRO_BASE_URL/v2/proposal/simulation/financing" \
     "valorEntrada": 5000,
     "uf": "SP",
     "isVeiculoZeroKm": false,
+    "retornoComissao": 2,
     "cnpjLoja": "11.222.333/0001-81"
   }' | jq
 ```
-`valorEntrada` pode ser `0`, mas tem de ser menor que `valorVeiculo` e deixar ao menos 10% do veículo para financiar (`422` `Proposal.RequestAmountInvalid`). Se nenhum prazo aceita a entrada: `422` `Proposal.DownPaymentInvalid`. `uf` é a UF de registro do veículo, com 2 letras.
+`valorEntrada` pode ser `0`, mas tem de ser menor que `valorVeiculo` e deixar ao menos 10% do veículo para financiar (`422` `Proposal.RequestAmountInvalid`). Se nenhum prazo aceita a entrada: `422` `Proposal.DownPaymentInvalid`. `uf` é a UF de registro do veículo, com 2 letras. `retornoComissao` é **opcional**: omita para usar a taxa padrão (quando a loja permitir, ver `permite_taxa_padrao` acima); fora da faixa configurada ou loja sem faixa para `Financing`: `422` `Store.CommissionReturn.OutOfRange` / `Store.CommissionReturn.NotConfigured`. Só existe na rota `/v2` (não envie em `/v1`).
 
 **Simular refinanciamento**
 ```bash
@@ -230,10 +238,11 @@ curl -s -X POST "$CREDICARRO_BASE_URL/v2/proposal/simulation/refinancing" \
     "cpf": "12345678909",
     "placa": "ABC1D23",
     "valorSolicitado": 25000,
+    "retornoComissao": 2,
     "cnpjLoja": "11.222.333/0001-81"
   }' | jq
 ```
-`valorSolicitado` tem de caber na faixa refinanciável de algum prazo (`422` `Simulation.Refinancing.AmountOutOfRange` ou `Proposal.RequestAmountInvalid`). Sem UF da placa nem do endereço do cliente: `422` `Simulation.Refinancing.UfUnavailable`.
+`valorSolicitado` tem de caber na faixa refinanciável de algum prazo (`422` `Simulation.Refinancing.AmountOutOfRange` ou `Proposal.RequestAmountInvalid`). Sem UF da placa nem do endereço do cliente: `422` `Simulation.Refinancing.UfUnavailable`. `retornoComissao` segue a mesma regra do financiamento, para o tipo `Refinancing`.
 
 As duas simulações respondem `201` com **uma opção por prazo elegível**:
 ```json

@@ -7,6 +7,7 @@ namespace Parceiro\Credicarro;
 use Twila\Credicarro\CredicarroClient;
 use Twila\Credicarro\ListRequest;
 use Twila\Credicarro\PagedResult;
+use Twila\Credicarro\Simulations\CommissionReturn;
 use Twila\Credicarro\Simulations\CreateFinancingSimulationRequest;
 use Twila\Credicarro\Simulations\CreateRefinancingSimulationRequest;
 use Twila\Credicarro\Simulations\FinancingRangeOption;
@@ -28,6 +29,12 @@ function refinancingRange(CredicarroClient $client): array
     return $client->simulations->getRefinancingRange('ABC1D23', STORE_CNPJ);
 }
 
+/** @return CommissionReturn[] faixa de retorno de comissão aceita por tipo de simulação */
+function commissionReturns(CredicarroClient $client): array
+{
+    return $client->simulations->getCommissionReturns(STORE_CNPJ);
+}
+
 /** O SDK gera e reaproveita a Idempotency-Key nas retentativas desta chamada. Uma opção por prazo.
  * @return SimulationOption[]
  */
@@ -40,7 +47,8 @@ function createFinancing(CredicarroClient $client): array
         5000.0,          // entrada
         'SP',            // UF
         false,           // veículo zero km?
-        STORE_CNPJ       // cnpjLoja (obrigatório na v2)
+        STORE_CNPJ,      // cnpjLoja (obrigatório na v2)
+        null             // retornoComissao: opcional, dentro da faixa de getCommissionReturns
     ));
 }
 

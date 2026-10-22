@@ -21,6 +21,10 @@ public static class SimulationsExample
     public static Task<IReadOnlyList<RefinancingRangeOption>> RefinancingRangeAsync(ICredicarroClient client, string plate, CancellationToken ct) =>
         client.Simulations.GetRefinancingRangeAsync(plate, StoreCnpj, ct);
 
+    // Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar CommissionReturn.
+    public static Task<IReadOnlyList<CommissionReturn>> CommissionReturnsAsync(ICredicarroClient client, CancellationToken ct) =>
+        client.Simulations.GetCommissionReturnsAsync(StoreCnpj, ct);
+
     // Uma opção por prazo elegível. O SDK envia a Idempotency-Key sozinho (a mesma em todas as tentativas).
     public static async Task<SimulationOption> SimulateFinancingAsync(ICredicarroClient client, CancellationToken ct)
     {
@@ -31,7 +35,9 @@ public static class SimulationsExample
             DownPayment: 9000m,
             State: "SP",
             IsZeroKm: false,
-            StoreCnpj: StoreCnpj), ct);
+            StoreCnpj: StoreCnpj
+            // CommissionReturn: 2 // opcional, dentro da faixa de GetCommissionReturnsAsync
+            ), ct);
 
         foreach (var option in options)
             Console.WriteLine($"{option.Term}x de R$ {option.InstallmentAmount:N2} | CET a.m. {option.MonthlyCet}% | CET a.a. {option.AnnualCet}%");

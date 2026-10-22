@@ -451,6 +451,13 @@ Resposta: `{"opcoes_por_prazo": [{"prazo": 36, "valor_minimo_refinanciavel": 500
 
 Sem prazos para o veículo, as duas faixas retornam `422` `Simulation.Terms.Unavailable`.
 
+**Consultar retornos de comissão disponíveis (opcional, antes de simular)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v2/proposal/simulation/commission-returns?cnpjLoja=11222333000181" | jq
+```
+Resposta: `{"retornos_comissao": [{"tipo": "Financing", "alvo": "Store", "retorno_minimo": 0, "retorno_maximo": 6, "permite_taxa_padrao": true}, ...]}` — um item por tipo (`Financing`/`Refinancing`) que a loja tiver configurado. Use um valor dentro de `retorno_minimo`..`retorno_maximo` em `retornoComissao` ao simular. Se a loja não tiver nenhum item de um tipo, não envie `retornoComissao` nesse tipo (ver abaixo).
+
 **Simular financiamento**
 ```bash
 CHAVE=$(uuidgen)   # guarde para repetir esta mesma simulação
@@ -464,10 +471,11 @@ curl -s -X POST "$CREDICARRO_BASE_URL/v2/proposal/simulation/financing" \
     "valorEntrada": 5000,
     "uf": "SP",
     "isVeiculoZeroKm": false,
+    "retornoComissao": 2,
     "cnpjLoja": "11.222.333/0001-81"
   }' | jq
 ```
-`valorEntrada` pode ser `0`, mas tem de ser menor que `valorVeiculo` e deixar ao menos 10% do veículo para financiar (`422` `Proposal.RequestAmountInvalid`). Se nenhum prazo aceita a entrada: `422` `Proposal.DownPaymentInvalid`. `uf` é a UF de registro do veículo, com 2 letras.
+`valorEntrada` pode ser `0`, mas tem de ser menor que `valorVeiculo` e deixar ao menos 10% do veículo para financiar (`422` `Proposal.RequestAmountInvalid`). Se nenhum prazo aceita a entrada: `422` `Proposal.DownPaymentInvalid`. `uf` é a UF de registro do veículo, com 2 letras. `retornoComissao` é **opcional**: omita para usar a taxa padrão (quando a loja permitir, ver `permite_taxa_padrao` acima); fora da faixa configurada ou loja sem faixa para `Financing`: `422` `Store.CommissionReturn.OutOfRange` / `Store.CommissionReturn.NotConfigured`. Só existe na rota `/v2` (não envie em `/v1`).
 
 **Simular refinanciamento**
 ```bash
@@ -479,10 +487,11 @@ curl -s -X POST "$CREDICARRO_BASE_URL/v2/proposal/simulation/refinancing" \
     "cpf": "12345678909",
     "placa": "ABC1D23",
     "valorSolicitado": 25000,
+    "retornoComissao": 2,
     "cnpjLoja": "11.222.333/0001-81"
   }' | jq
 ```
-`valorSolicitado` tem de caber na faixa refinanciável de algum prazo (`422` `Simulation.Refinancing.AmountOutOfRange` ou `Proposal.RequestAmountInvalid`). Sem UF da placa nem do endereço do cliente: `422` `Simulation.Refinancing.UfUnavailable`.
+`valorSolicitado` tem de caber na faixa refinanciável de algum prazo (`422` `Simulation.Refinancing.AmountOutOfRange` ou `Proposal.RequestAmountInvalid`). Sem UF da placa nem do endereço do cliente: `422` `Simulation.Refinancing.UfUnavailable`. `retornoComissao` segue a mesma regra do financiamento, para o tipo `Refinancing`.
 
 As duas simulações respondem `201` com **uma opção por prazo elegível**:
 ```json
@@ -861,10 +870,15 @@ public sealed record FinancingRangeOption(int Term, decimal MinimumDownPayment);
 public sealed record RefinancingRangeOption(int Term, decimal MinimumAmount, decimal MaximumAmount);   // valor_minimo_refinanciavel / valor_maximo_refinanciavel
 
 public sealed record CreateFinancingSimulationRequest(string Cpf, string LicensePlate, decimal VehicleAmount,
-    decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj);
-    // cpf, placa, valorVeiculo, valorEntrada, uf, isVeiculoZeroKm, cnpjLoja
-public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj);
-    // cpf, placa, valorSolicitado, cnpjLoja
+    decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj, int? CommissionReturn = null);
+    // cpf, placa, valorVeiculo, valorEntrada, uf, isVeiculoZeroKm, cnpjLoja, retornoComissao (opcional)
+public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj, int? CommissionReturn = null);
+    // cpf, placa, valorSolicitado, cnpjLoja, retornoComissao (opcional)
+
+public enum CommissionReturnType { Financing = 1, Refinancing = 2, Unknown = -1 }
+public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
+public sealed record CommissionReturn(CommissionReturnType Type, CommissionReturnTarget Target,
+    int MinimumReturn, int MaximumReturn, bool AllowDefaultRate);
 
 public sealed record SimulationOption(Guid SimulationId, decimal RequestedAmount, int Term, decimal InstallmentAmount,
     decimal TacAmount, decimal BoletoAmount, decimal InsuranceAmount, decimal IofAmount, decimal IofRate,
@@ -890,6 +904,7 @@ public interface ISimulationsClient
 {
     Task<IReadOnlyList<FinancingRangeOption>> GetFinancingRangeAsync(string licensePlate, string storeCnpj, CancellationToken cancellationToken = default);     // GET v2/proposal/simulation/range/financing
     Task<IReadOnlyList<RefinancingRangeOption>> GetRefinancingRangeAsync(string licensePlate, string storeCnpj, CancellationToken cancellationToken = default); // GET v2/proposal/simulation/range/refinancing
+    Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default); // GET v2/proposal/simulation/commission-returns
     Task<IReadOnlyList<SimulationOption>> CreateFinancingAsync(CreateFinancingSimulationRequest request, CancellationToken cancellationToken = default);       // POST v2/proposal/simulation/financing
     Task<IReadOnlyList<SimulationOption>> CreateRefinancingAsync(CreateRefinancingSimulationRequest request, CancellationToken cancellationToken = default);   // POST v2/proposal/simulation/refinancing
     Task<Simulation> GetAsync(Guid simulationId, CancellationToken cancellationToken = default);                       // GET v1/proposal/simulation/{id}
@@ -912,6 +927,7 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 - Financiamento: `DownPayment` pode ser `0`, deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRangeAsync`. Consulte a faixa antes de simular para evitar `422`.
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
+- `CommissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `GetCommissionReturnsAsync(storeCnpj)` antes de informar um valor. Omitido (`null`), usa a taxa padrão (quando a loja permitir, ver `AllowDefaultRate`). Só existe nas rotas v2.
 - Guarde o `SimulationId` da opção escolhida: ele vira o `SimulationId` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Não gere a sua.
 - `ListAsync` e `GetAsync` devolvem o retrato completo de simulações já criadas (`Simulation`). `Type` vem do nome e cai em `SimulationType.Unknown` para valor novo.
@@ -931,7 +947,7 @@ var chosen = options.OrderBy(o => o.InstallmentAmount).First();
 ### Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
-- `CredicarroBusinessRuleException` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- `CredicarroBusinessRuleException` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`, `Store.CommissionReturn.NotConfigured`, `Store.CommissionReturn.OutOfRange`.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `CredicarroValidationException` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `ApproximateDailyRetention` é `null` quando não se aplica: mantenha o campo nulo.
@@ -1419,6 +1435,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 public interface SimulationsClient {                                  // v2 (rotas por loja) + leituras v1
     List<FinancingRangeOption> getFinancingRange(String licensePlate, String storeCnpj);
     List<RefinancingRangeOption> getRefinancingRange(String licensePlate, String storeCnpj);
+    List<CommissionReturn> getCommissionReturns(String storeCnpj);   // GET v2/proposal/simulation/commission-returns
     List<SimulationOption> createFinancing(CreateFinancingSimulationRequest request);
     List<SimulationOption> createRefinancing(CreateRefinancingSimulationRequest request);
     Simulation get(UUID simulationId);                                // GET v1/proposal/simulation/{id}
@@ -1439,13 +1456,24 @@ public class CreateFinancingSimulationRequest {
     String state;        // UF, 2 letras
     boolean isZeroKm;    // builder: .isZeroKm(false)
     String storeCnpj;
+    Integer commissionReturn; // retornoComissao: opcional, builder: .commissionReturn(2)
 }
 
 @Value @Builder
 public class CreateRefinancingSimulationRequest {
     String cpf; String licensePlate; BigDecimal requestedAmount; String storeCnpj;
+    Integer commissionReturn; // opcional
 }
-// V1CreateFinancingSimulationRequest / V1CreateRefinancingSimulationRequest: os mesmos campos, sem storeCnpj.
+// V1CreateFinancingSimulationRequest / V1CreateRefinancingSimulationRequest: os mesmos campos, sem storeCnpj nem commissionReturn.
+
+public enum CommissionReturnType { FINANCING, REFINANCING, UNKNOWN }
+public enum CommissionReturnTarget { STORE, ORGANIZATION, UNKNOWN }
+@Value
+public class CommissionReturn {
+    CommissionReturnType type; CommissionReturnTarget target;
+    int minimumReturn; int maximumReturn;
+    boolean allowDefaultRate; // loja aceita simular sem informar commissionReturn
+}
 
 @Value public class FinancingRangeOption   { int term; BigDecimal minimumDownPayment; }
 @Value public class RefinancingRangeOption { int term; BigDecimal minimumAmount; BigDecimal maximumAmount; }
@@ -1486,6 +1514,7 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 - `getFinancingRange` / `getRefinancingRange` devolvem os prazos possíveis para a placa e a loja antes de simular: a entrada mínima (financiamento) ou a faixa de valor (refinanciamento) de cada prazo.
 - `createFinancing` / `createRefinancing` devolvem a lista de `SimulationOption`, uma por prazo elegível. O SDK gera a `Idempotency-Key` e a reaproveita nas retentativas.
 - `get(simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
+- `commissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `getCommissionReturns(storeCnpj)` antes de informar um valor. Omitido (`null`), usa a taxa padrão (quando a loja permitir, ver `isAllowDefaultRate()`). Só existe nas rotas v2.
 - As rotas **v1** (`client.v1().simulations()`) não recebem o CNPJ da loja. Para integrações novas, use a v2.
 
 ### Exemplo
@@ -1511,6 +1540,7 @@ for (SimulationOption opcao : opcoes)
 - `404 Store.Integration.NotFound`: a loja não existe ou não está vinculada ao seu cadastro de parceiro. `404 Customer.Account.NotFound`: cadastre o cliente antes (veja clientes). Ambos chegam como `CredicarroApiException`.
 - `422` (`CredicarroBusinessRuleException`): `Store.Integration.Intermediation` (loja com contrato de intermediação, que não serve para a integração), `Simulation.Terms.Unavailable` (sem prazos para o veículo), `Proposal.DownPaymentInvalid` (nenhum prazo aceita a entrada), `Proposal.RequestAmountInvalid` (entrada que deixa menos de 10% do veículo para financiar, ou valor fora da faixa).
 - Refinanciamento: `Simulation.Refinancing.AmountOutOfRange` (valor fora da faixa de todos os prazos) e `Simulation.Refinancing.UfUnavailable` (sem UF na placa nem no endereço do cliente).
+- `commissionReturn` inválido: `Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo) ou `Store.CommissionReturn.OutOfRange` (fora da faixa).
 - `downPayment` pode ser `0`, mas precisa ser menor que `vehicleAmount` (`Validation.DownPayment.NotBelowVehicleAmount`). `vehicleAmount` deve ser maior que zero.
 - `licensePlate` aceita o padrão antigo (`ABC-1234`) e Mercosul (`ABC1D23`). `state` tem 2 letras.
 - `409 Proposal.SimulationIdempotencyConflict`: a `Idempotency-Key` já foi usada com outro conteúdo. Você não informa a chave nas simulações; o SDK gera uma por chamada, então o conflito só aparece se a mesma chamada lógica mudar de conteúdo entre tentativas.
@@ -1995,7 +2025,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 
 ```typescript
 import type {
-  FinancingRangeOption, RefinancingRangeOption,
+  FinancingRangeOption, RefinancingRangeOption, CommissionReturn,
   CreateFinancingSimulationRequest, CreateRefinancingSimulationRequest,
   CreateFinancingSimulationRequestV1, CreateRefinancingSimulationRequestV1,
   SimulationOption, Simulation, SimulationType,
@@ -2004,16 +2034,27 @@ import type {
 interface FinancingRangeOption { term: number; minimumDownPayment: number }
 interface RefinancingRangeOption { term: number; minimumAmount: number; maximumAmount: number }
 
+interface CommissionReturn {
+  type: 'Financing' | 'Refinancing';
+  target: 'Store' | 'Organization';
+  minimumReturn: number; maximumReturn: number;
+  allowDefaultRate: boolean; // loja aceita simular sem informar commissionReturn
+}
+
 interface CreateFinancingSimulationRequest {
   cpf: string; licensePlate: string; vehicleAmount: number;
   downPayment: number;      // pode ser 0, mas precisa deixar >= 10% do veículo para financiar
   state: string;            // UF com 2 letras
   isZeroKm: boolean;
   storeCnpj: string;        // formatado ou só números
+  commissionReturn?: number; // retornoComissao: opcional, dentro da faixa de getCommissionReturns
 }
-interface CreateRefinancingSimulationRequest { cpf: string; licensePlate: string; requestedAmount: number; storeCnpj: string }
-type CreateFinancingSimulationRequestV1 = Omit<CreateFinancingSimulationRequest, 'storeCnpj'>;
-type CreateRefinancingSimulationRequestV1 = Omit<CreateRefinancingSimulationRequest, 'storeCnpj'>;
+interface CreateRefinancingSimulationRequest {
+  cpf: string; licensePlate: string; requestedAmount: number; storeCnpj: string; commissionReturn?: number;
+}
+// V1: Omit também remove commissionReturn (as rotas v1 não têm esse campo).
+type CreateFinancingSimulationRequestV1 = Omit<CreateFinancingSimulationRequest, 'storeCnpj' | 'commissionReturn'>;
+type CreateRefinancingSimulationRequestV1 = Omit<CreateRefinancingSimulationRequest, 'storeCnpj' | 'commissionReturn'>;
 
 interface SimulationOption {
   simulationId: string; requestedAmount: number; term: number; installmentAmount: number;
@@ -2043,6 +2084,7 @@ interface Simulation {
 interface SimulationsClient {   // client.simulations
   getFinancingRange(licensePlate: string, storeCnpj: string): Promise<FinancingRangeOption[]>;     // GET v2/proposal/simulation/range/financing
   getRefinancingRange(licensePlate: string, storeCnpj: string): Promise<RefinancingRangeOption[]>; // GET v2/proposal/simulation/range/refinancing
+  getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;                            // GET v2/proposal/simulation/commission-returns
   createFinancing(request: CreateFinancingSimulationRequest): Promise<SimulationOption[]>;         // POST v2/proposal/simulation/financing
   createRefinancing(request: CreateRefinancingSimulationRequest): Promise<SimulationOption[]>;     // POST v2/proposal/simulation/refinancing
   get(simulationId: string): Promise<Simulation>;                                                  // GET v1/proposal/simulation/{id}
@@ -2065,6 +2107,7 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 - As rotas v1 (`client.v1.simulations`) não têm `storeCnpj`: a loja de integração é a vinculada ao parceiro. Prefira as rotas v2; use a v1 só em integrações antigas. Numa integração v1, crie e consulte a proposta por `client.v1.proposals`.
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult<Simulation>`).
 - Mostre o CET (`monthlyCet`, `annualCet`) ao cliente: é o número certo para comparar opções.
+- `commissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `getCommissionReturns(storeCnpj)` antes de informar um valor. Omitido, usa a taxa padrão (quando a loja permitir, ver `allowDefaultRate`). Só existe nas rotas v2.
 
 ### Exemplo
 (Fonte: `examples/node/simulations.ts`)
@@ -2093,6 +2136,7 @@ const opcoesV1 = await client.v1.simulations.createRefinancing({ cpf: '123456789
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `errorCode`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disableAutomaticIdempotencyKey` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.Unknown` se a API ganhar um tipo novo; não lance erro.
+- `commissionReturn` inválido: `422 Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo) ou `422 Store.CommissionReturn.OutOfRange` (fora da faixa).
 ### Proposals
 
 A proposta é a solicitação de crédito, criada a partir de uma opção de simulação. Para cada participante (comprador, loja e, quando houver, vendedor), ela traz a etapa ativa e quem precisa agir. Os códigos de status, etapa, situação, responsável, biometria e documento estão em [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). Acesse por `client.proposals` (v2) e `client.v1.proposals` (v1), usando o cliente único de client.md.
@@ -2582,7 +2626,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 
 ```python
 from twila_credicarro import (
-    FinancingRangeOption, RefinancingRangeOption,
+    FinancingRangeOption, RefinancingRangeOption, CommissionReturn, CommissionReturnType, CommissionReturnTarget,
     CreateFinancingSimulationRequest, CreateRefinancingSimulationRequest,
     CreateFinancingSimulationV1Request, CreateRefinancingSimulationV1Request,
     SimulationOption, Simulation, SimulationType,
@@ -2594,15 +2638,25 @@ class FinancingRangeOption: term: int; minimum_down_payment: float
 class RefinancingRangeOption: term: int; minimum_amount: float; maximum_amount: float
 
 @dataclass(frozen=True)
+class CommissionReturn:
+    type: CommissionReturnType          # FINANCING | REFINANCING | UNKNOWN
+    target: CommissionReturnTarget      # STORE | ORGANIZATION | UNKNOWN
+    minimum_return: int; maximum_return: int
+    allow_default_rate: bool            # loja aceita simular sem informar commission_return
+
+@dataclass(frozen=True)
 class CreateFinancingSimulationRequest:
     cpf: str; license_plate: str; vehicle_amount: float
     down_payment: float        # pode ser 0, mas precisa deixar >= 10% do veículo para financiar
     state: str                 # UF com 2 letras
     is_zero_km: bool
     store_cnpj: str            # formatado ou só números
+    commission_return: Optional[int] = None  # retornoComissao: opcional, dentro da faixa de get_commission_returns
 @dataclass(frozen=True)
-class CreateRefinancingSimulationRequest: cpf: str; license_plate: str; requested_amount: float; store_cnpj: str
-# V1: os mesmos campos, sem store_cnpj
+class CreateRefinancingSimulationRequest:
+    cpf: str; license_plate: str; requested_amount: float; store_cnpj: str
+    commission_return: Optional[int] = None
+# V1: os mesmos campos, sem store_cnpj nem commission_return
 #   CreateFinancingSimulationV1Request(cpf, license_plate, vehicle_amount, down_payment, state, is_zero_km)
 #   CreateRefinancingSimulationV1Request(cpf, license_plate, requested_amount)
 
@@ -2635,6 +2689,7 @@ class Simulation:
 class SimulationsClient:   # client.simulations
     def get_financing_range(self, license_plate: str, store_cnpj: str) -> list[FinancingRangeOption]: ...     # GET v2/proposal/simulation/range/financing
     def get_refinancing_range(self, license_plate: str, store_cnpj: str) -> list[RefinancingRangeOption]: ... # GET v2/proposal/simulation/range/refinancing
+    def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...                          # GET v2/proposal/simulation/commission-returns
     def create_financing(self, request: CreateFinancingSimulationRequest) -> list[SimulationOption]: ...       # POST v2/proposal/simulation/financing
     def create_refinancing(self, request: CreateRefinancingSimulationRequest) -> list[SimulationOption]: ...   # POST v2/proposal/simulation/refinancing
     def get(self, simulation_id: Identifier) -> Simulation: ...                                                # GET v1/proposal/simulation/{id}
@@ -2655,12 +2710,14 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 - As rotas v1 (`client.v1.simulations`) não têm `store_cnpj`: a loja de integração é a vinculada ao parceiro. Prefira as rotas v2; use a v1 só em integrações antigas. Numa integração v1, crie e consulte a proposta por `client.v1.proposals`.
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult[Simulation]`).
 - Mostre o CET (`monthly_cet`, `annual_cet`) ao cliente: é o número certo para comparar opções.
+- `commission_return` (`retornoComissao`) é opcional: consulte a faixa aceita com `get_commission_returns(store_cnpj)` antes de informar um valor. Omitido, usa a taxa padrão (quando a loja permitir, ver `allow_default_rate`). Só existe nas rotas v2.
 
 ### Exemplo
 (Fonte: `examples/python/simulations.py`)
 
 ```python
 faixa = client.simulations.get_financing_range("ABC1D23", "11.222.333/0001-81")
+retornos = client.simulations.get_commission_returns("11.222.333/0001-81")  # faixa aceita em commission_return
 
 opcoes = client.simulations.create_financing(
     CreateFinancingSimulationRequest(
@@ -2687,6 +2744,7 @@ opcoes_v1 = client.v1.simulations.create_refinancing(
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `error_code`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disable_automatic_idempotency_key` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.UNKNOWN` se a API ganhar um tipo novo; não lance erro.
+- `commission_return` inválido: `422 Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo), `422 Store.CommissionReturn.OutOfRange` (fora da faixa) ou `400 Validation.Amount.MustNotBeNegative` (valor negativo).
 - Campos de `Simulation` podem ser `None`: não assuma que `vehicle`, `iof` ou `cet` estão sempre presentes.
 ### Proposals
 
@@ -3188,6 +3246,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 final class SimulationsClient {                                        // $client->simulations: v2 (rotas por loja) + leituras v1
     public function getFinancingRange(string $licensePlate, string $storeCnpj): array;    // FinancingRangeOption[]
     public function getRefinancingRange(string $licensePlate, string $storeCnpj): array;  // RefinancingRangeOption[]
+    public function getCommissionReturns(string $storeCnpj): array;                       // CommissionReturn[]
     public function createFinancing(CreateFinancingSimulationRequest $request): array;    // SimulationOption[] (storeCnpj obrigatório)
     public function createRefinancing(CreateRefinancingSimulationRequest $request): array;// SimulationOption[] (storeCnpj obrigatório)
     public function get(string $simulationId): Simulation;                                // GET v1/proposal/simulation/{id}
@@ -3206,12 +3265,23 @@ final class CreateFinancingSimulationRequest {
         string $cpf, string $licensePlate, float $vehicleAmount, float $downPayment,
         string $state,          // UF, 2 letras
         bool $isZeroKm,
-        ?string $storeCnpj = null
+        ?string $storeCnpj = null,
+        ?int $commissionReturn = null   // retornoComissao: opcional, ignorado em $client->v1->simulations
     );
 }
 
 final class CreateRefinancingSimulationRequest {
-    public function __construct(string $cpf, string $licensePlate, float $requestedAmount, ?string $storeCnpj = null);
+    public function __construct(
+        string $cpf, string $licensePlate, float $requestedAmount,
+        ?string $storeCnpj = null, ?int $commissionReturn = null
+    );
+}
+
+final class CommissionReturn { // GET v2/proposal/simulation/commission-returns
+    public $type;              // CommissionReturnType::FINANCING | REFINANCING | UNKNOWN
+    public $target;            // CommissionReturnTarget::STORE | ORGANIZATION | UNKNOWN
+    public $minimumReturn; public $maximumReturn;
+    public $allowDefaultRate;  // loja aceita simular sem informar commissionReturn
 }
 
 final class FinancingRangeOption   { public $term; public $minimumDownPayment; }
@@ -3250,6 +3320,7 @@ final class Simulation { // GET v1/proposal/simulation/{id}
 - `getFinancingRange` / `getRefinancingRange` devolvem os prazos possíveis para a placa e a loja antes de simular: a entrada mínima (financiamento) ou a faixa de valor (refinanciamento) de cada prazo.
 - `createFinancing` / `createRefinancing` devolvem a lista de `SimulationOption`, uma por prazo elegível. O SDK gera a `Idempotency-Key` e a reaproveita nas retentativas. Na v2, `storeCnpj` é obrigatório: sem ele o SDK lança `CredicarroValidationException` (`Validation.Field.Required`).
 - `get($simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
+- `commissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `getCommissionReturns($storeCnpj)` antes de informar um valor. Omitido (`null`), usa a taxa padrão (quando a loja permitir, ver `allowDefaultRate`). Só existe nas rotas v2.
 - As rotas **v1** (`$client->v1->simulations`) não usam o CNPJ da loja (mesmos objetos de requisição, sem `storeCnpj`). Para integrações novas, use a v2.
 
 ### Exemplo
@@ -3274,6 +3345,7 @@ foreach ($opcoes as $opcao) {
 - `404 Store.Integration.NotFound`: a loja não existe ou não está vinculada ao seu cadastro de parceiro. `404 Customer.Account.NotFound`: cadastre o cliente antes (veja clientes). Ambos chegam como `CredicarroApiException`.
 - `422` (`CredicarroBusinessRuleException`): `Store.Integration.Intermediation` (loja com contrato de intermediação, que não serve para a integração), `Simulation.Terms.Unavailable` (sem prazos para o veículo), `Proposal.DownPaymentInvalid` (nenhum prazo aceita a entrada), `Proposal.RequestAmountInvalid` (entrada que deixa menos de 10% do veículo para financiar, ou valor fora da faixa).
 - Refinanciamento: `Simulation.Refinancing.AmountOutOfRange` (valor fora da faixa de todos os prazos) e `Simulation.Refinancing.UfUnavailable` (sem UF na placa nem no endereço do cliente).
+- `commissionReturn` inválido: `Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo) ou `Store.CommissionReturn.OutOfRange` (fora da faixa).
 - `downPayment` pode ser `0`, mas precisa ser menor que `vehicleAmount` (`Validation.DownPayment.NotBelowVehicleAmount`). `vehicleAmount` deve ser maior que zero.
 - `licensePlate` aceita o padrão antigo (`ABC-1234`) e Mercosul (`ABC1D23`). `state` tem 2 letras.
 - `409 Proposal.SimulationIdempotencyConflict`: a `Idempotency-Key` já foi usada com outro conteúdo. Você não informa a chave nas simulações; o SDK gera uma por chamada, então o conflito só aparece se a mesma chamada lógica mudar de conteúdo entre tentativas.
@@ -3766,9 +3838,22 @@ type CreateFinancingSimulationRequest struct {
     VehicleAmount, DownPayment float64 // DownPayment: zero quando não há entrada; menor que VehicleAmount
     State string                       // uf do registro do veículo
     IsZeroKm bool
+    CommissionReturn *int              // retornoComissao: opcional, nil usa a taxa padrão
     StoreCnpj string                   // formatado ou só números
 }
-type CreateRefinancingSimulationRequest struct { Cpf, LicensePlate string; RequestedAmount float64; StoreCnpj string }
+type CreateRefinancingSimulationRequest struct {
+    Cpf, LicensePlate string; RequestedAmount float64
+    CommissionReturn *int // retornoComissao: opcional
+    StoreCnpj string
+}
+
+type CommissionReturnType int    // CommissionReturnTypeFinancing=1, Refinancing=2, Unknown=-1
+type CommissionReturnTarget int  // CommissionReturnTargetStore=1, Organization=2, Unknown=-1
+type CommissionReturn struct {
+    Type CommissionReturnType; Target CommissionReturnTarget
+    MinimumReturn, MaximumReturn int
+    AllowDefaultRate bool // loja aceita simular sem informar CommissionReturn
+}
 
 type SimulationOption struct {
     SimulationID string
@@ -3798,6 +3883,7 @@ type V1CreateRefinancingSimulationRequest struct { Cpf, LicensePlate string; Req
 ```go
 func (c *SimulationsClient) GetFinancingRange(ctx context.Context, licensePlate, storeCnpj string) ([]FinancingRangeOption, error)     // GET v2/proposal/simulation/range/financing
 func (c *SimulationsClient) GetRefinancingRange(ctx context.Context, licensePlate, storeCnpj string) ([]RefinancingRangeOption, error) // GET v2/proposal/simulation/range/refinancing
+func (c *SimulationsClient) GetCommissionReturns(ctx context.Context, storeCnpj string) ([]CommissionReturn, error) // GET v2/proposal/simulation/commission-returns
 func (c *SimulationsClient) CreateFinancing(ctx context.Context, req CreateFinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error)     // POST v2/proposal/simulation/financing
 func (c *SimulationsClient) CreateRefinancing(ctx context.Context, req CreateRefinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error) // POST v2/proposal/simulation/refinancing
 func (c *SimulationsClient) Get(ctx context.Context, simulationID string) (*Simulation, error)                       // GET v1/proposal/simulation/{id}
@@ -3817,6 +3903,7 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 - Financiamento: `DownPayment` pode ser `0` (campo `float64` sempre é enviado), deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRange`. Consulte a faixa antes de simular para evitar `422`.
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
+- `CommissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `GetCommissionReturns(ctx, storeCnpj)` antes de informar um valor. `nil` usa a taxa padrão (quando a loja permitir, ver `AllowDefaultRate`). Só existe nas rotas v2.
 - Guarde o `SimulationID` da opção escolhida: ele vira o `SimulationID` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Passe `WithIdempotencyKey` só se você persiste uma chave por operação.
 - `Get` e `List` devolvem o retrato completo de simulações já criadas. `Type` vem do nome e cai em `SimulationTypeUnknown` para valor novo (o texto original fica em `TypeRaw`).
@@ -3836,7 +3923,7 @@ options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinanci
 ### Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
-- `*BusinessRuleError` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- `*BusinessRuleError` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`, `Store.CommissionReturn.NotConfigured`, `Store.CommissionReturn.OutOfRange`.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `*ValidationError` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `simulationID` que não é UUID e `licensePlate` ou `storeCnpj` vazios voltam como `*ConfigurationError`, sem chamar a API.
@@ -4315,6 +4402,10 @@ public static class SimulationsExample
     public static Task<IReadOnlyList<RefinancingRangeOption>> RefinancingRangeAsync(ICredicarroClient client, string plate, CancellationToken ct) =>
         client.Simulations.GetRefinancingRangeAsync(plate, StoreCnpj, ct);
 
+    // Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar CommissionReturn.
+    public static Task<IReadOnlyList<CommissionReturn>> CommissionReturnsAsync(ICredicarroClient client, CancellationToken ct) =>
+        client.Simulations.GetCommissionReturnsAsync(StoreCnpj, ct);
+
     // Uma opção por prazo elegível. O SDK envia a Idempotency-Key sozinho (a mesma em todas as tentativas).
     public static async Task<SimulationOption> SimulateFinancingAsync(ICredicarroClient client, CancellationToken ct)
     {
@@ -4325,7 +4416,9 @@ public static class SimulationsExample
             DownPayment: 9000m,
             State: "SP",
             IsZeroKm: false,
-            StoreCnpj: StoreCnpj), ct);
+            StoreCnpj: StoreCnpj
+            // CommissionReturn: 2 // opcional, dentro da faixa de GetCommissionReturnsAsync
+            ), ct);
 
         foreach (var option in options)
             Console.WriteLine($"{option.Term}x de R$ {option.InstallmentAmount:N2} | CET a.m. {option.MonthlyCet}% | CET a.a. {option.AnnualCet}%");
@@ -4836,6 +4929,7 @@ import java.util.UUID;
 import twila.credicarro.CredicarroClient;
 import twila.credicarro.ListRequest;
 import twila.credicarro.PagedResult;
+import twila.credicarro.simulations.model.CommissionReturn;
 import twila.credicarro.simulations.model.CreateFinancingSimulationRequest;
 import twila.credicarro.simulations.model.CreateRefinancingSimulationRequest;
 import twila.credicarro.simulations.model.FinancingRangeOption;
@@ -4860,6 +4954,11 @@ public final class SimulationsExample {
         return client.simulations().getRefinancingRange("ABC1D23", STORE_CNPJ);
     }
 
+    /** Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar commissionReturn. */
+    public static List<CommissionReturn> commissionReturns(CredicarroClient client) {
+        return client.simulations().getCommissionReturns(STORE_CNPJ);
+    }
+
     /** O SDK gera e reaproveita a Idempotency-Key nas retentativas desta chamada. Uma opção por prazo. */
     public static List<SimulationOption> createFinancing(CredicarroClient client) {
         return client.simulations().createFinancing(CreateFinancingSimulationRequest.builder()
@@ -4870,6 +4969,7 @@ public final class SimulationsExample {
                 .state("SP")
                 .isZeroKm(false)
                 .storeCnpj(STORE_CNPJ)
+                // .commissionReturn(2) // opcional, dentro da faixa de getCommissionReturns
                 .build());
     }
 
@@ -5351,6 +5451,11 @@ export async function refinancingRange(licensePlate: string) {
   return client.simulations.getRefinancingRange(licensePlate, LOJA_CNPJ); // [{ term, minimumAmount, maximumAmount }]
 }
 
+/** Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar commissionReturn. */
+export async function commissionReturns() {
+  return client.simulations.getCommissionReturns(LOJA_CNPJ);
+}
+
 /** Uma opção por prazo elegível. O cliente precisa estar cadastrado. O SDK envia a Idempotency-Key sozinho. */
 export async function simulateFinancing(cpf: string, licensePlate: string): Promise<SimulationOption[]> {
   return client.simulations.createFinancing({
@@ -5361,6 +5466,7 @@ export async function simulateFinancing(cpf: string, licensePlate: string): Prom
     state: 'SP',
     isZeroKm: false,
     storeCnpj: LOJA_CNPJ,
+    // commissionReturn: 2, // opcional, dentro da faixa de getCommissionReturns
   });
 }
 
@@ -5903,6 +6009,7 @@ def update_professional_data(cpf: str, data: ProfessionalData) -> None:
 from __future__ import annotations
 
 from twila_credicarro import (
+    CommissionReturn,
     CreateFinancingSimulationRequest,
     CreateFinancingSimulationV1Request,
     CreateRefinancingSimulationRequest,
@@ -5928,6 +6035,11 @@ def refinancing_range(license_plate: str) -> list[RefinancingRangeOption]:
     return client.simulations.get_refinancing_range(license_plate, LOJA_CNPJ)  # [term, minimum_amount, maximum_amount]
 
 
+def commission_returns() -> list[CommissionReturn]:
+    """Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar commission_return."""
+    return client.simulations.get_commission_returns(LOJA_CNPJ)
+
+
 def simulate_financing(cpf: str, license_plate: str) -> list[SimulationOption]:
     """Uma opção por prazo elegível. O cliente precisa estar cadastrado. O SDK envia a Idempotency-Key sozinho."""
     return client.simulations.create_financing(
@@ -5939,6 +6051,7 @@ def simulate_financing(cpf: str, license_plate: str) -> list[SimulationOption]:
             state="SP",
             is_zero_km=False,
             store_cnpj=LOJA_CNPJ,
+            # commission_return=2,  # opcional, dentro da faixa de commission_returns()
         )
     )
 
@@ -6498,6 +6611,7 @@ namespace Parceiro\Credicarro;
 use Twila\Credicarro\CredicarroClient;
 use Twila\Credicarro\ListRequest;
 use Twila\Credicarro\PagedResult;
+use Twila\Credicarro\Simulations\CommissionReturn;
 use Twila\Credicarro\Simulations\CreateFinancingSimulationRequest;
 use Twila\Credicarro\Simulations\CreateRefinancingSimulationRequest;
 use Twila\Credicarro\Simulations\FinancingRangeOption;
@@ -6519,6 +6633,12 @@ function refinancingRange(CredicarroClient $client): array
     return $client->simulations->getRefinancingRange('ABC1D23', STORE_CNPJ);
 }
 
+/** @return CommissionReturn[] faixa de retorno de comissão aceita por tipo de simulação */
+function commissionReturns(CredicarroClient $client): array
+{
+    return $client->simulations->getCommissionReturns(STORE_CNPJ);
+}
+
 /** O SDK gera e reaproveita a Idempotency-Key nas retentativas desta chamada. Uma opção por prazo.
  * @return SimulationOption[]
  */
@@ -6531,7 +6651,8 @@ function createFinancing(CredicarroClient $client): array
         5000.0,          // entrada
         'SP',            // UF
         false,           // veículo zero km?
-        STORE_CNPJ       // cnpjLoja (obrigatório na v2)
+        STORE_CNPJ,      // cnpjLoja (obrigatório na v2)
+        null             // retornoComissao: opcional, dentro da faixa de getCommissionReturns
     ));
 }
 
@@ -7124,6 +7245,11 @@ func refinancingRange(ctx context.Context, client *credicarro.Client, plate stri
 	return client.Simulations.GetRefinancingRange(ctx, plate, exampleStoreCnpj)
 }
 
+// commissionReturns consulta a faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar CommissionReturn.
+func commissionReturns(ctx context.Context, client *credicarro.Client) ([]credicarro.CommissionReturn, error) {
+	return client.Simulations.GetCommissionReturns(ctx, exampleStoreCnpj)
+}
+
 // simulateFinancing devolve uma opção por prazo elegível. O SDK envia a Idempotency-Key sozinho (a mesma em todas as tentativas).
 func simulateFinancing(ctx context.Context, client *credicarro.Client) (credicarro.SimulationOption, error) {
 	options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinancingSimulationRequest{
@@ -7134,6 +7260,7 @@ func simulateFinancing(ctx context.Context, client *credicarro.Client) (credicar
 		State:         "SP",
 		IsZeroKm:      false,
 		StoreCnpj:     exampleStoreCnpj,
+		// CommissionReturn: &retorno, // opcional, dentro da faixa de GetCommissionReturns
 	})
 	if err != nil || len(options) == 0 {
 		return credicarro.SimulationOption{}, err
