@@ -9,10 +9,15 @@ public sealed record FinancingRangeOption(int Term, decimal MinimumDownPayment);
 public sealed record RefinancingRangeOption(int Term, decimal MinimumAmount, decimal MaximumAmount);   // valor_minimo_refinanciavel / valor_maximo_refinanciavel
 
 public sealed record CreateFinancingSimulationRequest(string Cpf, string LicensePlate, decimal VehicleAmount,
-    decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj);
-    // cpf, placa, valorVeiculo, valorEntrada, uf, isVeiculoZeroKm, cnpjLoja
-public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj);
-    // cpf, placa, valorSolicitado, cnpjLoja
+    decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj, int? CommissionReturn = null);
+    // cpf, placa, valorVeiculo, valorEntrada, uf, isVeiculoZeroKm, cnpjLoja, retornoComissao (opcional)
+public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj, int? CommissionReturn = null);
+    // cpf, placa, valorSolicitado, cnpjLoja, retornoComissao (opcional)
+
+public enum CommissionReturnType { Financing = 1, Refinancing = 2, Unknown = -1 }
+public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
+public sealed record CommissionReturn(CommissionReturnType Type, CommissionReturnTarget Target,
+    int MinimumReturn, int MaximumReturn, bool AllowDefaultRate);
 
 public sealed record SimulationOption(Guid SimulationId, decimal RequestedAmount, int Term, decimal InstallmentAmount,
     decimal TacAmount, decimal BoletoAmount, decimal InsuranceAmount, decimal IofAmount, decimal IofRate,
@@ -38,6 +43,7 @@ public interface ISimulationsClient
 {
     Task<IReadOnlyList<FinancingRangeOption>> GetFinancingRangeAsync(string licensePlate, string storeCnpj, CancellationToken cancellationToken = default);     // GET v2/proposal/simulation/range/financing
     Task<IReadOnlyList<RefinancingRangeOption>> GetRefinancingRangeAsync(string licensePlate, string storeCnpj, CancellationToken cancellationToken = default); // GET v2/proposal/simulation/range/refinancing
+    Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default); // GET v2/proposal/simulation/commission-returns
     Task<IReadOnlyList<SimulationOption>> CreateFinancingAsync(CreateFinancingSimulationRequest request, CancellationToken cancellationToken = default);       // POST v2/proposal/simulation/financing
     Task<IReadOnlyList<SimulationOption>> CreateRefinancingAsync(CreateRefinancingSimulationRequest request, CancellationToken cancellationToken = default);   // POST v2/proposal/simulation/refinancing
     Task<Simulation> GetAsync(Guid simulationId, CancellationToken cancellationToken = default);                       // GET v1/proposal/simulation/{id}
@@ -60,6 +66,7 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 - Financiamento: `DownPayment` pode ser `0`, deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRangeAsync`. Consulte a faixa antes de simular para evitar `422`.
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
+- `CommissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `GetCommissionReturnsAsync(storeCnpj)` antes de informar um valor. Omitido (`null`), usa a taxa padrão (quando a loja permitir, ver `AllowDefaultRate`). Só existe nas rotas v2.
 - Guarde o `SimulationId` da opção escolhida: ele vira o `SimulationId` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Não gere a sua.
 - `ListAsync` e `GetAsync` devolvem o retrato completo de simulações já criadas (`Simulation`). `Type` vem do nome e cai em `SimulationType.Unknown` para valor novo.
@@ -79,7 +86,7 @@ var chosen = options.OrderBy(o => o.InstallmentAmount).First();
 ## Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
-- `CredicarroBusinessRuleException` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- `CredicarroBusinessRuleException` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`, `Store.CommissionReturn.NotConfigured`, `Store.CommissionReturn.OutOfRange`.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `CredicarroValidationException` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `ApproximateDailyRetention` é `null` quando não se aplica: mantenha o campo nulo.

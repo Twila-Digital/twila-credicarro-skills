@@ -9,6 +9,7 @@ import java.util.UUID;
 import twila.credicarro.CredicarroClient;
 import twila.credicarro.ListRequest;
 import twila.credicarro.PagedResult;
+import twila.credicarro.simulations.model.CommissionReturn;
 import twila.credicarro.simulations.model.CreateFinancingSimulationRequest;
 import twila.credicarro.simulations.model.CreateRefinancingSimulationRequest;
 import twila.credicarro.simulations.model.FinancingRangeOption;
@@ -33,6 +34,11 @@ public final class SimulationsExample {
         return client.simulations().getRefinancingRange("ABC1D23", STORE_CNPJ);
     }
 
+    /** Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar commissionReturn. */
+    public static List<CommissionReturn> commissionReturns(CredicarroClient client) {
+        return client.simulations().getCommissionReturns(STORE_CNPJ);
+    }
+
     /** O SDK gera e reaproveita a Idempotency-Key nas retentativas desta chamada. Uma opção por prazo. */
     public static List<SimulationOption> createFinancing(CredicarroClient client) {
         return client.simulations().createFinancing(CreateFinancingSimulationRequest.builder()
@@ -43,6 +49,7 @@ public final class SimulationsExample {
                 .state("SP")
                 .isZeroKm(false)
                 .storeCnpj(STORE_CNPJ)
+                // .commissionReturn(2) // opcional, dentro da faixa de getCommissionReturns
                 .build());
     }
 

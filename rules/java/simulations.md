@@ -8,6 +8,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 public interface SimulationsClient {                                  // v2 (rotas por loja) + leituras v1
     List<FinancingRangeOption> getFinancingRange(String licensePlate, String storeCnpj);
     List<RefinancingRangeOption> getRefinancingRange(String licensePlate, String storeCnpj);
+    List<CommissionReturn> getCommissionReturns(String storeCnpj);   // GET v2/proposal/simulation/commission-returns
     List<SimulationOption> createFinancing(CreateFinancingSimulationRequest request);
     List<SimulationOption> createRefinancing(CreateRefinancingSimulationRequest request);
     Simulation get(UUID simulationId);                                // GET v1/proposal/simulation/{id}
@@ -28,13 +29,24 @@ public class CreateFinancingSimulationRequest {
     String state;        // UF, 2 letras
     boolean isZeroKm;    // builder: .isZeroKm(false)
     String storeCnpj;
+    Integer commissionReturn; // retornoComissao: opcional, builder: .commissionReturn(2)
 }
 
 @Value @Builder
 public class CreateRefinancingSimulationRequest {
     String cpf; String licensePlate; BigDecimal requestedAmount; String storeCnpj;
+    Integer commissionReturn; // opcional
 }
-// V1CreateFinancingSimulationRequest / V1CreateRefinancingSimulationRequest: os mesmos campos, sem storeCnpj.
+// V1CreateFinancingSimulationRequest / V1CreateRefinancingSimulationRequest: os mesmos campos, sem storeCnpj nem commissionReturn.
+
+public enum CommissionReturnType { FINANCING, REFINANCING, UNKNOWN }
+public enum CommissionReturnTarget { STORE, ORGANIZATION, UNKNOWN }
+@Value
+public class CommissionReturn {
+    CommissionReturnType type; CommissionReturnTarget target;
+    int minimumReturn; int maximumReturn;
+    boolean allowDefaultRate; // loja aceita simular sem informar commissionReturn
+}
 
 @Value public class FinancingRangeOption   { int term; BigDecimal minimumDownPayment; }
 @Value public class RefinancingRangeOption { int term; BigDecimal minimumAmount; BigDecimal maximumAmount; }
@@ -75,6 +87,7 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 - `getFinancingRange` / `getRefinancingRange` devolvem os prazos possíveis para a placa e a loja antes de simular: a entrada mínima (financiamento) ou a faixa de valor (refinanciamento) de cada prazo.
 - `createFinancing` / `createRefinancing` devolvem a lista de `SimulationOption`, uma por prazo elegível. O SDK gera a `Idempotency-Key` e a reaproveita nas retentativas.
 - `get(simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
+- `commissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `getCommissionReturns(storeCnpj)` antes de informar um valor. Omitido (`null`), usa a taxa padrão (quando a loja permitir, ver `isAllowDefaultRate()`). Só existe nas rotas v2.
 - As rotas **v1** (`client.v1().simulations()`) não recebem o CNPJ da loja. Para integrações novas, use a v2.
 
 ## Exemplo
@@ -100,6 +113,7 @@ for (SimulationOption opcao : opcoes)
 - `404 Store.Integration.NotFound`: a loja não existe ou não está vinculada ao seu cadastro de parceiro. `404 Customer.Account.NotFound`: cadastre o cliente antes (veja [clientes](customers.md)). Ambos chegam como `CredicarroApiException`.
 - `422` (`CredicarroBusinessRuleException`): `Store.Integration.Intermediation` (loja com contrato de intermediação, que não serve para a integração), `Simulation.Terms.Unavailable` (sem prazos para o veículo), `Proposal.DownPaymentInvalid` (nenhum prazo aceita a entrada), `Proposal.RequestAmountInvalid` (entrada que deixa menos de 10% do veículo para financiar, ou valor fora da faixa).
 - Refinanciamento: `Simulation.Refinancing.AmountOutOfRange` (valor fora da faixa de todos os prazos) e `Simulation.Refinancing.UfUnavailable` (sem UF na placa nem no endereço do cliente).
+- `commissionReturn` inválido: `Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo) ou `Store.CommissionReturn.OutOfRange` (fora da faixa).
 - `downPayment` pode ser `0`, mas precisa ser menor que `vehicleAmount` (`Validation.DownPayment.NotBelowVehicleAmount`). `vehicleAmount` deve ser maior que zero.
 - `licensePlate` aceita o padrão antigo (`ABC-1234`) e Mercosul (`ABC1D23`). `state` tem 2 letras.
 - `409 Proposal.SimulationIdempotencyConflict`: a `Idempotency-Key` já foi usada com outro conteúdo. Você não informa a chave nas simulações; o SDK gera uma por chamada, então o conflito só aparece se a mesma chamada lógica mudar de conteúdo entre tentativas.

@@ -13,9 +13,22 @@ type CreateFinancingSimulationRequest struct {
     VehicleAmount, DownPayment float64 // DownPayment: zero quando não há entrada; menor que VehicleAmount
     State string                       // uf do registro do veículo
     IsZeroKm bool
+    CommissionReturn *int              // retornoComissao: opcional, nil usa a taxa padrão
     StoreCnpj string                   // formatado ou só números
 }
-type CreateRefinancingSimulationRequest struct { Cpf, LicensePlate string; RequestedAmount float64; StoreCnpj string }
+type CreateRefinancingSimulationRequest struct {
+    Cpf, LicensePlate string; RequestedAmount float64
+    CommissionReturn *int // retornoComissao: opcional
+    StoreCnpj string
+}
+
+type CommissionReturnType int    // CommissionReturnTypeFinancing=1, Refinancing=2, Unknown=-1
+type CommissionReturnTarget int  // CommissionReturnTargetStore=1, Organization=2, Unknown=-1
+type CommissionReturn struct {
+    Type CommissionReturnType; Target CommissionReturnTarget
+    MinimumReturn, MaximumReturn int
+    AllowDefaultRate bool // loja aceita simular sem informar CommissionReturn
+}
 
 type SimulationOption struct {
     SimulationID string
@@ -45,6 +58,7 @@ type V1CreateRefinancingSimulationRequest struct { Cpf, LicensePlate string; Req
 ```go
 func (c *SimulationsClient) GetFinancingRange(ctx context.Context, licensePlate, storeCnpj string) ([]FinancingRangeOption, error)     // GET v2/proposal/simulation/range/financing
 func (c *SimulationsClient) GetRefinancingRange(ctx context.Context, licensePlate, storeCnpj string) ([]RefinancingRangeOption, error) // GET v2/proposal/simulation/range/refinancing
+func (c *SimulationsClient) GetCommissionReturns(ctx context.Context, storeCnpj string) ([]CommissionReturn, error) // GET v2/proposal/simulation/commission-returns
 func (c *SimulationsClient) CreateFinancing(ctx context.Context, req CreateFinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error)     // POST v2/proposal/simulation/financing
 func (c *SimulationsClient) CreateRefinancing(ctx context.Context, req CreateRefinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error) // POST v2/proposal/simulation/refinancing
 func (c *SimulationsClient) Get(ctx context.Context, simulationID string) (*Simulation, error)                       // GET v1/proposal/simulation/{id}
@@ -64,6 +78,7 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 - Financiamento: `DownPayment` pode ser `0` (campo `float64` sempre é enviado), deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRange`. Consulte a faixa antes de simular para evitar `422`.
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
+- `CommissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `GetCommissionReturns(ctx, storeCnpj)` antes de informar um valor. `nil` usa a taxa padrão (quando a loja permitir, ver `AllowDefaultRate`). Só existe nas rotas v2.
 - Guarde o `SimulationID` da opção escolhida: ele vira o `SimulationID` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Passe `WithIdempotencyKey` só se você persiste uma chave por operação.
 - `Get` e `List` devolvem o retrato completo de simulações já criadas. `Type` vem do nome e cai em `SimulationTypeUnknown` para valor novo (o texto original fica em `TypeRaw`).
@@ -83,7 +98,7 @@ options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinanci
 ## Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
-- `*BusinessRuleError` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- `*BusinessRuleError` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`, `Store.CommissionReturn.NotConfigured`, `Store.CommissionReturn.OutOfRange`.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `*ValidationError` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `simulationID` que não é UUID e `licensePlate` ou `storeCnpj` vazios voltam como `*ConfigurationError`, sem chamar a API.

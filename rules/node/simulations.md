@@ -6,7 +6,7 @@ A simulação calcula as condições de crédito para um cliente, um veículo e 
 
 ```typescript
 import type {
-  FinancingRangeOption, RefinancingRangeOption,
+  FinancingRangeOption, RefinancingRangeOption, CommissionReturn,
   CreateFinancingSimulationRequest, CreateRefinancingSimulationRequest,
   CreateFinancingSimulationRequestV1, CreateRefinancingSimulationRequestV1,
   SimulationOption, Simulation, SimulationType,
@@ -15,16 +15,27 @@ import type {
 interface FinancingRangeOption { term: number; minimumDownPayment: number }
 interface RefinancingRangeOption { term: number; minimumAmount: number; maximumAmount: number }
 
+interface CommissionReturn {
+  type: 'Financing' | 'Refinancing';
+  target: 'Store' | 'Organization';
+  minimumReturn: number; maximumReturn: number;
+  allowDefaultRate: boolean; // loja aceita simular sem informar commissionReturn
+}
+
 interface CreateFinancingSimulationRequest {
   cpf: string; licensePlate: string; vehicleAmount: number;
   downPayment: number;      // pode ser 0, mas precisa deixar >= 10% do veículo para financiar
   state: string;            // UF com 2 letras
   isZeroKm: boolean;
   storeCnpj: string;        // formatado ou só números
+  commissionReturn?: number; // retornoComissao: opcional, dentro da faixa de getCommissionReturns
 }
-interface CreateRefinancingSimulationRequest { cpf: string; licensePlate: string; requestedAmount: number; storeCnpj: string }
-type CreateFinancingSimulationRequestV1 = Omit<CreateFinancingSimulationRequest, 'storeCnpj'>;
-type CreateRefinancingSimulationRequestV1 = Omit<CreateRefinancingSimulationRequest, 'storeCnpj'>;
+interface CreateRefinancingSimulationRequest {
+  cpf: string; licensePlate: string; requestedAmount: number; storeCnpj: string; commissionReturn?: number;
+}
+// V1: Omit também remove commissionReturn (as rotas v1 não têm esse campo).
+type CreateFinancingSimulationRequestV1 = Omit<CreateFinancingSimulationRequest, 'storeCnpj' | 'commissionReturn'>;
+type CreateRefinancingSimulationRequestV1 = Omit<CreateRefinancingSimulationRequest, 'storeCnpj' | 'commissionReturn'>;
 
 interface SimulationOption {
   simulationId: string; requestedAmount: number; term: number; installmentAmount: number;
@@ -54,6 +65,7 @@ interface Simulation {
 interface SimulationsClient {   // client.simulations
   getFinancingRange(licensePlate: string, storeCnpj: string): Promise<FinancingRangeOption[]>;     // GET v2/proposal/simulation/range/financing
   getRefinancingRange(licensePlate: string, storeCnpj: string): Promise<RefinancingRangeOption[]>; // GET v2/proposal/simulation/range/refinancing
+  getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;                            // GET v2/proposal/simulation/commission-returns
   createFinancing(request: CreateFinancingSimulationRequest): Promise<SimulationOption[]>;         // POST v2/proposal/simulation/financing
   createRefinancing(request: CreateRefinancingSimulationRequest): Promise<SimulationOption[]>;     // POST v2/proposal/simulation/refinancing
   get(simulationId: string): Promise<Simulation>;                                                  // GET v1/proposal/simulation/{id}
@@ -76,6 +88,7 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 - As rotas v1 (`client.v1.simulations`) não têm `storeCnpj`: a loja de integração é a vinculada ao parceiro. Prefira as rotas v2; use a v1 só em integrações antigas. Numa integração v1, crie e consulte a proposta por `client.v1.proposals`.
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult<Simulation>`).
 - Mostre o CET (`monthlyCet`, `annualCet`) ao cliente: é o número certo para comparar opções.
+- `commissionReturn` (`retornoComissao`) é opcional: consulte a faixa aceita com `getCommissionReturns(storeCnpj)` antes de informar um valor. Omitido, usa a taxa padrão (quando a loja permitir, ver `allowDefaultRate`). Só existe nas rotas v2.
 
 ## Exemplo
 (Fonte: `examples/node/simulations.ts`)
@@ -104,3 +117,4 @@ const opcoesV1 = await client.v1.simulations.createRefinancing({ cpf: '123456789
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `errorCode`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disableAutomaticIdempotencyKey` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.Unknown` se a API ganhar um tipo novo; não lance erro.
+- `commissionReturn` inválido: `422 Store.CommissionReturn.NotConfigured` (loja sem faixa configurada para o tipo) ou `422 Store.CommissionReturn.OutOfRange` (fora da faixa).

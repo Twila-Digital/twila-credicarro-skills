@@ -13,6 +13,11 @@ export async function refinancingRange(licensePlate: string) {
   return client.simulations.getRefinancingRange(licensePlate, LOJA_CNPJ); // [{ term, minimumAmount, maximumAmount }]
 }
 
+/** Faixa de retorno de comissão aceita por tipo de simulação. Consulte antes de informar commissionReturn. */
+export async function commissionReturns() {
+  return client.simulations.getCommissionReturns(LOJA_CNPJ);
+}
+
 /** Uma opção por prazo elegível. O cliente precisa estar cadastrado. O SDK envia a Idempotency-Key sozinho. */
 export async function simulateFinancing(cpf: string, licensePlate: string): Promise<SimulationOption[]> {
   return client.simulations.createFinancing({
@@ -23,6 +28,7 @@ export async function simulateFinancing(cpf: string, licensePlate: string): Prom
     state: 'SP',
     isZeroKm: false,
     storeCnpj: LOJA_CNPJ,
+    // commissionReturn: 2, // opcional, dentro da faixa de getCommissionReturns
   });
 }
 
