@@ -92,3 +92,31 @@ func simulateRefinancingV1(ctx context.Context, client *credicarro.Client) ([]cr
 		Cpf: "12345678909", LicensePlate: "ABC1D23", RequestedAmount: 15000,
 	})
 }
+
+// simulateFinancingWithoutCpf é a simulação rápida sem CPF (v1): só placa, valor do veículo e UF.
+// Nada é gravado e a opção não tem SimulationID: não cria proposta.
+func simulateFinancingWithoutCpf(ctx context.Context, client *credicarro.Client) ([]credicarro.FinancingWithoutCpfOption, error) {
+	downPayment := 5000.0 // opcional: deixe nil para a API usar a entrada mínima da taxa da loja
+	options, err := client.V1.Simulations.CreateFinancingWithoutCpf(ctx, credicarro.CreateFinancingWithoutCpfRequest{
+		LicensePlate:  "ABC1D23",
+		VehicleAmount: 45000,
+		DownPayment:   &downPayment,
+		State:         "SP",
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, option := range options {
+		fmt.Printf("%dx de R$ %.2f (entrada mínima R$ %.2f)\n", option.Term, option.InstallmentAmount, option.MinimumDownPayment)
+	}
+	return options, nil
+}
+
+// simulateRefinancingWithoutCpf só devolve os prazos em cuja faixa o valor cabe (MinimumAmount a MaximumAmount).
+func simulateRefinancingWithoutCpf(ctx context.Context, client *credicarro.Client) ([]credicarro.RefinancingWithoutCpfOption, error) {
+	return client.V1.Simulations.CreateRefinancingWithoutCpf(ctx, credicarro.CreateRefinancingWithoutCpfRequest{
+		LicensePlate:    "ABC1D23",
+		RequestedAmount: 20000,
+		State:           "SP",
+	})
+}

@@ -1,4 +1,4 @@
-import { type SimulationOption } from '@twila/credicarro';
+import { type FinancingWithoutCpfOption, type RefinancingWithoutCpfOption, type SimulationOption } from '@twila/credicarro';
 import { client } from './client';
 
 const LOJA_CNPJ = '11.222.333/0001-81'; // formatado ou só números; precisa estar vinculado ao seu parceiro
@@ -66,4 +66,18 @@ export async function simulateFinancingV1(cpf: string, licensePlate: string): Pr
 
 export async function simulateRefinancingV1(cpf: string, licensePlate: string): Promise<SimulationOption[]> {
   return client.v1.simulations.createRefinancing({ cpf, licensePlate, requestedAmount: 20000 });
+}
+
+/** Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem `simulationId`: não cria proposta. */
+export async function simulateFinancingWithoutCpf(licensePlate: string): Promise<FinancingWithoutCpfOption[]> {
+  // `downPayment` é opcional: omitido, a API usa a entrada mínima da taxa da loja.
+  const options = await client.v1.simulations.createFinancingWithoutCpf({ licensePlate, vehicleAmount: 45000, state: 'SP' });
+  options.forEach((option) => console.log(`${option.term}x de R$ ${option.installmentAmount.toFixed(2)} (entrada mínima ${option.minimumDownPayment})`));
+
+  return options;
+}
+
+/** Só voltam os prazos em cuja faixa o valor cabe; cada opção traz a faixa (`minimumAmount` a `maximumAmount`). */
+export async function simulateRefinancingWithoutCpf(licensePlate: string): Promise<RefinancingWithoutCpfOption[]> {
+  return client.v1.simulations.createRefinancingWithoutCpf({ licensePlate, requestedAmount: 20000, state: 'SP' });
 }

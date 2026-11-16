@@ -3,11 +3,15 @@ from __future__ import annotations
 from twila_credicarro import (
     CreateFinancingSimulationRequest,
     CreateFinancingSimulationV1Request,
+    CreateFinancingWithoutCpfRequest,
     CreateRefinancingSimulationRequest,
     CreateRefinancingSimulationV1Request,
+    CreateRefinancingWithoutCpfRequest,
     FinancingRangeOption,
+    FinancingWithoutCpfOption,
     ListRequest,
     RefinancingRangeOption,
+    RefinancingWithoutCpfOption,
     SimulationOption,
 )
 
@@ -90,4 +94,23 @@ def simulate_financing_v1(cpf: str, license_plate: str) -> list[SimulationOption
 def simulate_refinancing_v1(cpf: str, license_plate: str) -> list[SimulationOption]:
     return client.v1.simulations.create_refinancing(
         CreateRefinancingSimulationV1Request(cpf=cpf, license_plate=license_plate, requested_amount=20000)
+    )
+
+
+def simulate_financing_without_cpf(license_plate: str) -> list[FinancingWithoutCpfOption]:
+    """Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não cria proposta."""
+    # `down_payment` é opcional: omitido, a API usa a entrada mínima da taxa da loja.
+    options = client.v1.simulations.create_financing_without_cpf(
+        CreateFinancingWithoutCpfRequest(license_plate=license_plate, vehicle_amount=45000, state="SP")
+    )
+    for option in options:
+        print(f"{option.term}x de R$ {option.installment_amount:.2f} (entrada mínima {option.minimum_down_payment})")
+
+    return options
+
+
+def simulate_refinancing_without_cpf(license_plate: str) -> list[RefinancingWithoutCpfOption]:
+    """Só voltam os prazos em cuja faixa o valor cabe; cada opção traz `minimum_amount` e `maximum_amount`."""
+    return client.v1.simulations.create_refinancing_without_cpf(
+        CreateRefinancingWithoutCpfRequest(license_plate=license_plate, requested_amount=20000, state="SP")
     )

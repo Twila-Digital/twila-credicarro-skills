@@ -38,6 +38,33 @@ type Simulation struct {
 // Rotas v1: as mesmas requisições, sem StoreCnpj.
 type V1CreateFinancingSimulationRequest struct { Cpf, LicensePlate string; VehicleAmount, DownPayment float64; State string; IsZeroKm bool }
 type V1CreateRefinancingSimulationRequest struct { Cpf, LicensePlate string; RequestedAmount float64 }
+
+// Sem CPF (client.V1.Simulations): só placa, valor e UF
+type CreateFinancingWithoutCpfRequest struct {
+    LicensePlate string
+    VehicleAmount float64
+    DownPayment *float64 // opcional: nil omite valorEntrada e a API usa a entrada mínima da taxa da loja
+    State string
+}
+type CreateRefinancingWithoutCpfRequest struct { LicensePlate string; RequestedAmount float64; State string } // todos obrigatórios
+
+// Opções sem CPF: lista, sem SimulationID; os demais campos são os de SimulationOption
+type FinancingWithoutCpfOption struct {
+    RequestedAmount float64; Term int; InstallmentAmount float64
+    TacAmount, BoletoAmount, InsuranceAmount, IofAmount, IofRate float64
+    TotalCreditAmount, TotalDebtAmount float64
+    MonthlyCet, AnnualCet, MonthlyInterestRate, AnnualInterestRate float64
+    ApproximateDailyRetention *float64 // nil quando não se aplica
+    MinimumDownPayment float64
+}
+type RefinancingWithoutCpfOption struct { // mesmos campos, com a faixa refinanciável do prazo no lugar da entrada mínima
+    RequestedAmount float64; Term int; InstallmentAmount float64
+    TacAmount, BoletoAmount, InsuranceAmount, IofAmount, IofRate float64
+    TotalCreditAmount, TotalDebtAmount float64
+    MonthlyCet, AnnualCet, MonthlyInterestRate, AnnualInterestRate float64
+    ApproximateDailyRetention *float64
+    MinimumAmount, MaximumAmount float64
+}
 ```
 
 ## Métodos
@@ -55,6 +82,8 @@ func (c *V1SimulationsClient) GetFinancingRange(ctx context.Context, licensePlat
 func (c *V1SimulationsClient) GetRefinancingRange(ctx context.Context, licensePlate string) ([]RefinancingRangeOption, error)
 func (c *V1SimulationsClient) CreateFinancing(ctx context.Context, req V1CreateFinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error)
 func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1CreateRefinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error)
+func (c *V1SimulationsClient) CreateFinancingWithoutCpf(ctx context.Context, req CreateFinancingWithoutCpfRequest, opts ...RequestOption) ([]FinancingWithoutCpfOption, error)       // POST v1/proposal/simulation/financing/without-cpf
+func (c *V1SimulationsClient) CreateRefinancingWithoutCpf(ctx context.Context, req CreateRefinancingWithoutCpfRequest, opts ...RequestOption) ([]RefinancingWithoutCpfOption, error) // POST v1/proposal/simulation/refinancing/without-cpf
 ```
 
 ## Features
@@ -63,6 +92,7 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 - Use as rotas v2 com `StoreCnpj` (formatado ou só números). A loja precisa estar vinculada ao parceiro e não pode ter contrato de intermediação. As rotas `client.V1.Simulations` existem para integrações antigas; use as v2.
 - Financiamento: `DownPayment` pode ser `0` (campo `float64` sempre é enviado), deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRange`. Consulte a faixa antes de simular para evitar `422`.
+- **Simulação rápida sem CPF** (`CreateFinancingWithoutCpf` e `CreateRefinancingWithoutCpf`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `SimulationID` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. `DownPayment` é `*float64`: `nil` omite a entrada. Cada opção traz `MinimumDownPayment` (financiamento) ou `MinimumAmount` e `MaximumAmount` (refinanciamento).
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
 - Guarde o `SimulationID` da opção escolhida: ele vira o `SimulationID` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Passe `WithIdempotencyKey` só se você persiste uma chave por operação.
@@ -78,12 +108,21 @@ options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinanci
     Cpf: "12345678909", LicensePlate: "ABC1D23", VehicleAmount: 45000, DownPayment: 9000,
     State: "SP", IsZeroKm: false, StoreCnpj: "11.222.333/0001-81",
 })
+
+// Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem SimulationID (não cria proposta)
+semCpf, err := client.V1.Simulations.CreateFinancingWithoutCpf(ctx, credicarro.CreateFinancingWithoutCpfRequest{
+    LicensePlate: "ABC1D23", VehicleAmount: 45000, State: "SP", // DownPayment nil: entrada mínima da taxa da loja
+})
+refinSemCpf, err := client.V1.Simulations.CreateRefinancingWithoutCpf(ctx, credicarro.CreateRefinancingWithoutCpfRequest{
+    LicensePlate: "ABC1D23", RequestedAmount: 20000, State: "SP",
+})
 ```
 
 ## Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
 - `*BusinessRuleError` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `*ValidationError` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `simulationID` que não é UUID e `licensePlate` ou `storeCnpj` vazios voltam como `*ConfigurationError`, sem chamar a API.

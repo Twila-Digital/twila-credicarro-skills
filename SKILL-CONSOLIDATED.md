@@ -513,6 +513,53 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$CREDICARRO_BASE_URL/v1/proposal/simulation?pagina_inicial=1&limite=10" | jq "$OCULTA_CPF"
 ```
 
+**Simulação rápida sem CPF (financiamento e refinanciamento)**
+
+Para só mostrar parcelas, sem CPF e sem cliente cadastrado. Usa a loja de integração vinculada ao parceiro (sem `cnpjLoja`), **não grava nada** e a resposta **não tem `id_simulacao`**: não serve para criar proposta (para isso, use a simulação com CPF acima). Não usa `Idempotency-Key` e é segura para repetir.
+
+```bash
+curl -s -X POST "$CREDICARRO_BASE_URL/v1/proposal/simulation/financing/without-cpf" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "placa": "ABC1D23",
+    "valorVeiculo": 45000,
+    "valorEntrada": 5000,
+    "uf": "SP"
+  }' | jq
+```
+`placa`, `valorVeiculo` e `uf` são obrigatórios. `valorEntrada` é opcional: omitido, a API usa a entrada mínima da taxa da loja; abaixo do mínimo, `422` `Proposal.DownPaymentInvalid`.
+
+```bash
+curl -s -X POST "$CREDICARRO_BASE_URL/v1/proposal/simulation/refinancing/without-cpf" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "placa": "ABC1D23",
+    "valorSolicitado": 25000,
+    "uf": "SP"
+  }' | jq
+```
+`placa`, `valorSolicitado` e `uf` são obrigatórios. Só voltam os prazos em cuja faixa o valor cabe (`422` `Proposal.RequestAmountInvalid` se nenhum serve).
+
+As duas respondem `200` com `cotacoes`, **uma opção por prazo** (os mesmos campos da simulação com CPF, sem `id_simulacao`):
+```json
+{
+  "cotacoes": [
+    {
+      "valor_solicitado": 40000, "prazo": 36, "valor_parcela": 2042.42,
+      "valor_tac": 1500, "valor_boleto": 3.5, "valor_seguro": 0,
+      "valor_iof": 872, "percentual_iof": 1.92,
+      "valor_credito_total": 42722, "valor_divida_total": 73527.12,
+      "percentual_cet_mensal": 3.75, "percentual_cet_anual": 55.52,
+      "percentual_juros_mensal": 3.29, "percentual_juros_anual": 47.47,
+      "valor_entrada_minima": 4500
+    }
+  ]
+}
+```
+No financiamento, cada opção traz `valor_entrada_minima`; no refinanciamento, `valor_minimo_refinanciavel` e `valor_maximo_refinanciavel` no lugar dela. `valor_retencao_diaria_aproximado` só aparece quando se aplica.
+
+Erros: `400` `Validation.Field.Required` (`uf` ausente), `Validation.Uf.Invalid`, `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound`, `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`.
+
 ---
 
 ##### Propostas (Proposal)
@@ -881,6 +928,24 @@ public sealed record Simulation(Guid SimulationId, int Term, decimal Installment
 public sealed record CreateFinancingSimulationV1Request(string Cpf, string LicensePlate, decimal VehicleAmount,
     decimal DownPayment, string State, bool IsZeroKm);
 public sealed record CreateRefinancingSimulationV1Request(string Cpf, string LicensePlate, decimal RequestedAmount);
+
+// Sem CPF (namespace Credicarro.V1.Models, em client.V1.Simulations): só placa, valor e UF
+public sealed record CreateFinancingWithoutCpfRequest(string LicensePlate, decimal VehicleAmount, string State, decimal? DownPayment = null);
+    // placa, valorVeiculo, uf, valorEntrada (omitida = entrada mínima da taxa da loja)
+public sealed record CreateRefinancingWithoutCpfRequest(string LicensePlate, decimal RequestedAmount, string State);
+    // placa, valorSolicitado, uf (todos obrigatórios)
+
+// Opções sem CPF: lista, sem SimulationId; os demais campos são os de SimulationOption
+public sealed record FinancingWithoutCpfOption(decimal RequestedAmount, int Term, decimal InstallmentAmount,
+    decimal TacAmount, decimal BoletoAmount, decimal InsuranceAmount, decimal IofAmount, decimal IofRate,
+    decimal TotalCreditAmount, decimal TotalDebtAmount, decimal MonthlyCet, decimal AnnualCet,
+    decimal MonthlyInterestRate, decimal AnnualInterestRate, decimal? ApproximateDailyRetention,
+    decimal MinimumDownPayment);
+public sealed record RefinancingWithoutCpfOption(decimal RequestedAmount, int Term, decimal InstallmentAmount,
+    decimal TacAmount, decimal BoletoAmount, decimal InsuranceAmount, decimal IofAmount, decimal IofRate,
+    decimal TotalCreditAmount, decimal TotalDebtAmount, decimal MonthlyCet, decimal AnnualCet,
+    decimal MonthlyInterestRate, decimal AnnualInterestRate, decimal? ApproximateDailyRetention,
+    decimal MinimumAmount, decimal MaximumAmount);   // faixa refinanciável do prazo
 ```
 
 ### Interface
@@ -902,6 +967,8 @@ public interface IV1SimulationsClient   // client.V1.Simulations
     Task<IReadOnlyList<RefinancingRangeOption>> GetRefinancingRangeAsync(string licensePlate, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SimulationOption>> CreateFinancingAsync(CreateFinancingSimulationV1Request request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SimulationOption>> CreateRefinancingAsync(CreateRefinancingSimulationV1Request request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FinancingWithoutCpfOption>> CreateFinancingWithoutCpfAsync(CreateFinancingWithoutCpfRequest request, CancellationToken cancellationToken = default);       // POST v1/proposal/simulation/financing/without-cpf
+    Task<IReadOnlyList<RefinancingWithoutCpfOption>> CreateRefinancingWithoutCpfAsync(CreateRefinancingWithoutCpfRequest request, CancellationToken cancellationToken = default); // POST v1/proposal/simulation/refinancing/without-cpf
 }
 ```
 
@@ -911,6 +978,7 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 - Use as rotas v2 com `StoreCnpj` (formatado ou só números). A loja precisa estar vinculada ao parceiro e não pode ter contrato de intermediação. As rotas `client.V1.Simulations` existem para integrações antigas; use as v2.
 - Financiamento: `DownPayment` pode ser `0`, deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRangeAsync`. Consulte a faixa antes de simular para evitar `422`.
+- **Simulação rápida sem CPF** (`CreateFinancingWithoutCpfAsync` e `CreateRefinancingWithoutCpfAsync`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `SimulationId` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. Cada opção traz `MinimumDownPayment` (financiamento) ou `MinimumAmount` e `MaximumAmount` (refinanciamento).
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
 - Guarde o `SimulationId` da opção escolhida: ele vira o `SimulationId` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Não gere a sua.
@@ -926,12 +994,19 @@ var options = await client.Simulations.CreateFinancingAsync(new CreateFinancingS
     Cpf: "12345678909", LicensePlate: "ABC1D23", VehicleAmount: 45000m, DownPayment: 9000m,
     State: "SP", IsZeroKm: false, StoreCnpj: "11.222.333/0001-81"), ct);
 var chosen = options.OrderBy(o => o.InstallmentAmount).First();
+
+// Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem SimulationId (não cria proposta)
+var semCpf = await client.V1.Simulations.CreateFinancingWithoutCpfAsync(
+    new CreateFinancingWithoutCpfRequest(LicensePlate: "ABC1D23", VehicleAmount: 45000m, State: "SP"), ct);
+var refinSemCpf = await client.V1.Simulations.CreateRefinancingWithoutCpfAsync(
+    new CreateRefinancingWithoutCpfRequest(LicensePlate: "ABC1D23", RequestedAmount: 20000m, State: "SP"), ct);
 ```
 
 ### Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
 - `CredicarroBusinessRuleException` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `CredicarroValidationException` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `ApproximateDailyRetention` é `null` quando não se aplica: mantenha o campo nulo.
@@ -1431,6 +1506,8 @@ public interface V1SimulationsClient {                                // client.
     List<RefinancingRangeOption> getRefinancingRange(String licensePlate);
     List<SimulationOption> createFinancing(V1CreateFinancingSimulationRequest request);
     List<SimulationOption> createRefinancing(V1CreateRefinancingSimulationRequest request);
+    List<FinancingWithoutCpfOption> createFinancingWithoutCpf(CreateFinancingWithoutCpfRequest request);       // POST v1/proposal/simulation/financing/without-cpf
+    List<RefinancingWithoutCpfOption> createRefinancingWithoutCpf(CreateRefinancingWithoutCpfRequest request); // POST v1/proposal/simulation/refinancing/without-cpf
 }
 
 @Value @Builder
@@ -1447,6 +1524,17 @@ public class CreateRefinancingSimulationRequest {
 }
 // V1CreateFinancingSimulationRequest / V1CreateRefinancingSimulationRequest: os mesmos campos, sem storeCnpj.
 
+// Sem CPF (pacote twila.credicarro.v1, em client.v1().simulations()): só placa, valor e UF
+@Value @Builder
+public class CreateFinancingWithoutCpfRequest {
+    String licensePlate; BigDecimal vehicleAmount;
+    BigDecimal downPayment;   // opcional: omitido, a API usa a entrada mínima da taxa da loja
+    String state;
+}
+
+@Value @Builder
+public class CreateRefinancingWithoutCpfRequest { String licensePlate; BigDecimal requestedAmount; String state; } // todos obrigatórios
+
 @Value public class FinancingRangeOption   { int term; BigDecimal minimumDownPayment; }
 @Value public class RefinancingRangeOption { int term; BigDecimal minimumAmount; BigDecimal maximumAmount; }
 
@@ -1458,6 +1546,29 @@ public class SimulationOption {
     BigDecimal totalCreditAmount; BigDecimal totalDebtAmount;
     BigDecimal monthlyCet; BigDecimal annualCet; BigDecimal monthlyInterestRate; BigDecimal annualInterestRate;
     BigDecimal approximateDailyRetention; // pode ser null
+}
+
+// Opções sem CPF (pacote twila.credicarro.simulations.model): lista, sem simulationId
+@Value
+public class FinancingWithoutCpfOption {
+    BigDecimal requestedAmount; Integer term; BigDecimal installmentAmount;
+    BigDecimal tacAmount; BigDecimal boletoAmount; BigDecimal insuranceAmount;
+    BigDecimal iofAmount; BigDecimal iofRate;
+    BigDecimal totalCreditAmount; BigDecimal totalDebtAmount;
+    BigDecimal monthlyCet; BigDecimal annualCet; BigDecimal monthlyInterestRate; BigDecimal annualInterestRate;
+    BigDecimal approximateDailyRetention; // pode ser null
+    BigDecimal minimumDownPayment;
+}
+
+@Value
+public class RefinancingWithoutCpfOption { // mesmos campos, com a faixa refinanciável do prazo no lugar da entrada mínima
+    BigDecimal requestedAmount; Integer term; BigDecimal installmentAmount;
+    BigDecimal tacAmount; BigDecimal boletoAmount; BigDecimal insuranceAmount;
+    BigDecimal iofAmount; BigDecimal iofRate;
+    BigDecimal totalCreditAmount; BigDecimal totalDebtAmount;
+    BigDecimal monthlyCet; BigDecimal annualCet; BigDecimal monthlyInterestRate; BigDecimal annualInterestRate;
+    BigDecimal approximateDailyRetention; // pode ser null
+    BigDecimal minimumAmount; BigDecimal maximumAmount;
 }
 
 @Value
@@ -1485,6 +1596,7 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 
 - `getFinancingRange` / `getRefinancingRange` devolvem os prazos possíveis para a placa e a loja antes de simular: a entrada mínima (financiamento) ou a faixa de valor (refinanciamento) de cada prazo.
 - `createFinancing` / `createRefinancing` devolvem a lista de `SimulationOption`, uma por prazo elegível. O SDK gera a `Idempotency-Key` e a reaproveita nas retentativas.
+- **Simulação rápida sem CPF** (`createFinancingWithoutCpf` e `createRefinancingWithoutCpf`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `simulationId` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. Cada opção traz `getMinimumDownPayment()` (financiamento) ou `getMinimumAmount()` e `getMaximumAmount()` (refinanciamento).
 - `get(simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
 - As rotas **v1** (`client.v1().simulations()`) não recebem o CNPJ da loja. Para integrações novas, use a v2.
 
@@ -1503,6 +1615,14 @@ List<SimulationOption> opcoes = client.simulations().createFinancing(CreateFinan
 
 for (SimulationOption opcao : opcoes)
     System.out.printf("%dx de %s (CET a.a. %s%%)%n", opcao.getTerm(), opcao.getInstallmentAmount(), opcao.getAnnualCet());
+
+// Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem simulationId (não cria proposta)
+List<FinancingWithoutCpfOption> semCpf = client.v1().simulations().createFinancingWithoutCpf(CreateFinancingWithoutCpfRequest.builder()
+        .licensePlate("ABC1D23").vehicleAmount(new BigDecimal("45000.00")).state("SP")
+        .build());
+List<RefinancingWithoutCpfOption> refinSemCpf = client.v1().simulations().createRefinancingWithoutCpf(CreateRefinancingWithoutCpfRequest.builder()
+        .licensePlate("ABC1D23").requestedAmount(new BigDecimal("20000.00")).state("SP")
+        .build());
 ```
 
 ### Erros e casos de borda
@@ -1513,6 +1633,7 @@ for (SimulationOption opcao : opcoes)
 - Refinanciamento: `Simulation.Refinancing.AmountOutOfRange` (valor fora da faixa de todos os prazos) e `Simulation.Refinancing.UfUnavailable` (sem UF na placa nem no endereço do cliente).
 - `downPayment` pode ser `0`, mas precisa ser menor que `vehicleAmount` (`Validation.DownPayment.NotBelowVehicleAmount`). `vehicleAmount` deve ser maior que zero.
 - `licensePlate` aceita o padrão antigo (`ABC-1234`) e Mercosul (`ABC1D23`). `state` tem 2 letras.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - `409 Proposal.SimulationIdempotencyConflict`: a `Idempotency-Key` já foi usada com outro conteúdo. Você não informa a chave nas simulações; o SDK gera uma por chamada, então o conflito só aparece se a mesma chamada lógica mudar de conteúdo entre tentativas.
 - Só os prazos elegíveis voltam. Se a lista vier vazia ou o prazo desejado não aparecer, ajuste entrada ou valor.
 - Use um `simulationId` de simulações feitas pela integração. Uma simulação fora de loja gera `Simulation.Access.NotFromStore` ao criar a proposta.
@@ -1999,6 +2120,8 @@ import type {
   CreateFinancingSimulationRequest, CreateRefinancingSimulationRequest,
   CreateFinancingSimulationRequestV1, CreateRefinancingSimulationRequestV1,
   SimulationOption, Simulation, SimulationType,
+  CreateFinancingWithoutCpfRequest, CreateRefinancingWithoutCpfRequest,
+  FinancingWithoutCpfOption, RefinancingWithoutCpfOption,
 } from '@twila/credicarro';
 
 interface FinancingRangeOption { term: number; minimumDownPayment: number }
@@ -2015,12 +2138,34 @@ interface CreateRefinancingSimulationRequest { cpf: string; licensePlate: string
 type CreateFinancingSimulationRequestV1 = Omit<CreateFinancingSimulationRequest, 'storeCnpj'>;
 type CreateRefinancingSimulationRequestV1 = Omit<CreateRefinancingSimulationRequest, 'storeCnpj'>;
 
+// Sem CPF (client.v1.simulations): só placa, valor e UF
+interface CreateFinancingWithoutCpfRequest { licensePlate: string; vehicleAmount: number; downPayment?: number; state: string }  // downPayment omitido = entrada mínima da taxa da loja
+interface CreateRefinancingWithoutCpfRequest { licensePlate: string; requestedAmount: number; state: string }                 // todos obrigatórios
+
 interface SimulationOption {
   simulationId: string; requestedAmount: number; term: number; installmentAmount: number;
   tacAmount: number; boletoAmount: number; insuranceAmount: number; iofAmount: number; iofRate: number;
   totalCreditAmount: number; totalDebtAmount: number;
   monthlyCet: number; annualCet: number; monthlyInterestRate: number; annualInterestRate: number;
   approximateDailyRetention?: number;   // omitido quando não se aplica
+}
+
+// Opções sem CPF: lista, sem simulationId
+interface FinancingWithoutCpfOption {
+  requestedAmount: number; term: number; installmentAmount: number;
+  tacAmount: number; boletoAmount: number; insuranceAmount: number; iofAmount: number; iofRate: number;
+  totalCreditAmount: number; totalDebtAmount: number;
+  monthlyCet: number; annualCet: number; monthlyInterestRate: number; annualInterestRate: number;
+  approximateDailyRetention?: number;
+  minimumDownPayment: number;
+}
+interface RefinancingWithoutCpfOption {   // mesmos campos, com a faixa refinanciável do prazo no lugar da entrada mínima
+  requestedAmount: number; term: number; installmentAmount: number;
+  tacAmount: number; boletoAmount: number; insuranceAmount: number; iofAmount: number; iofRate: number;
+  totalCreditAmount: number; totalDebtAmount: number;
+  monthlyCet: number; annualCet: number; monthlyInterestRate: number; annualInterestRate: number;
+  approximateDailyRetention?: number;
+  minimumAmount: number; maximumAmount: number;
 }
 
 // Simulação consultada (get e list): outro formato
@@ -2054,6 +2199,8 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
   getRefinancingRange(licensePlate: string): Promise<RefinancingRangeOption[]>;
   createFinancing(request: CreateFinancingSimulationRequestV1): Promise<SimulationOption[]>;
   createRefinancing(request: CreateRefinancingSimulationRequestV1): Promise<SimulationOption[]>;
+  createFinancingWithoutCpf(request: CreateFinancingWithoutCpfRequest): Promise<FinancingWithoutCpfOption[]>;       // POST v1/proposal/simulation/financing/without-cpf
+  createRefinancingWithoutCpf(request: CreateRefinancingWithoutCpfRequest): Promise<RefinancingWithoutCpfOption[]>; // POST v1/proposal/simulation/refinancing/without-cpf
 }
 ```
 
@@ -2063,6 +2210,7 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 - O SDK envia a `Idempotency-Key` das simulações sozinho (a mesma em todas as tentativas); você não passa chave.
 - Use o `simulationId` da opção escolhida em `client.proposals.create`. Cada opção gera **uma única proposta** e expira.
 - As rotas v1 (`client.v1.simulations`) não têm `storeCnpj`: a loja de integração é a vinculada ao parceiro. Prefira as rotas v2; use a v1 só em integrações antigas. Numa integração v1, crie e consulte a proposta por `client.v1.proposals`.
+- **Simulação rápida sem CPF** (`createFinancingWithoutCpf` e `createRefinancingWithoutCpf`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `simulationId` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. Cada opção traz `minimumDownPayment` (financiamento) ou `minimumAmount` e `maximumAmount` (refinanciamento).
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult<Simulation>`).
 - Mostre o CET (`monthlyCet`, `annualCet`) ao cliente: é o número certo para comparar opções.
 
@@ -2080,6 +2228,10 @@ const escolhida = opcoes.find((opcao) => opcao.term === 48);   // opcao.simulati
 
 // Rota v1: sem storeCnpj
 const opcoesV1 = await client.v1.simulations.createRefinancing({ cpf: '12345678909', licensePlate: 'ABC1D23', requestedAmount: 20000 });
+
+// Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem simulationId (não cria proposta)
+const semCpf = await client.v1.simulations.createFinancingWithoutCpf({ licensePlate: 'ABC1D23', vehicleAmount: 45000, state: 'SP' });
+const refinSemCpf = await client.v1.simulations.createRefinancingWithoutCpf({ licensePlate: 'ABC1D23', requestedAmount: 20000, state: 'SP' });
 ```
 
 ### Erros e casos de borda
@@ -2090,6 +2242,7 @@ const opcoesV1 = await client.v1.simulations.createRefinancing({ cpf: '123456789
 - Refinanciamento: `requestedAmount` fora da faixa: `422 Proposal.RequestAmountInvalid` ou `Simulation.Refinancing.AmountOutOfRange`; UF não identificada: `422 Simulation.Refinancing.UfUnavailable`.
 - Sem prazos para o veículo: `422 Simulation.Terms.Unavailable`.
 - `get` de simulação de outro parceiro: `404 Simulation.Access.NotFound`.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `errorCode`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disableAutomaticIdempotencyKey` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.Unknown` se a API ganhar um tipo novo; não lance erro.
@@ -2585,6 +2738,8 @@ from twila_credicarro import (
     FinancingRangeOption, RefinancingRangeOption,
     CreateFinancingSimulationRequest, CreateRefinancingSimulationRequest,
     CreateFinancingSimulationV1Request, CreateRefinancingSimulationV1Request,
+    CreateFinancingWithoutCpfRequest, CreateRefinancingWithoutCpfRequest,
+    FinancingWithoutCpfOption, RefinancingWithoutCpfOption,
     SimulationOption, Simulation, SimulationType,
 )
 
@@ -2606,6 +2761,14 @@ class CreateRefinancingSimulationRequest: cpf: str; license_plate: str; requeste
 #   CreateFinancingSimulationV1Request(cpf, license_plate, vehicle_amount, down_payment, state, is_zero_km)
 #   CreateRefinancingSimulationV1Request(cpf, license_plate, requested_amount)
 
+# Sem CPF (client.v1.simulations): só placa, valor e UF
+@dataclass(frozen=True)
+class CreateFinancingWithoutCpfRequest:
+    license_plate: str; vehicle_amount: float; state: str
+    down_payment: Optional[float] = None    # omitido = entrada mínima da taxa da loja (não vai no JSON)
+@dataclass(frozen=True)
+class CreateRefinancingWithoutCpfRequest: license_plate: str; requested_amount: float; state: str   # todos obrigatórios
+
 @dataclass(frozen=True)
 class SimulationOption:
     simulation_id: str; requested_amount: float; term: int; installment_amount: float
@@ -2613,6 +2776,24 @@ class SimulationOption:
     total_credit_amount: float; total_debt_amount: float
     monthly_cet: float; annual_cet: float; monthly_interest_rate: float; annual_interest_rate: float
     approximate_daily_retention: Optional[float] = None     # ausente quando não se aplica
+
+# Opções sem CPF: lista, sem simulation_id
+@dataclass(frozen=True)
+class FinancingWithoutCpfOption:
+    requested_amount: float; term: int; installment_amount: float
+    tac_amount: float; boleto_amount: float; insurance_amount: float; iof_amount: float; iof_rate: float
+    total_credit_amount: float; total_debt_amount: float
+    monthly_cet: float; annual_cet: float; monthly_interest_rate: float; annual_interest_rate: float
+    minimum_down_payment: float
+    approximate_daily_retention: Optional[float] = None
+@dataclass(frozen=True)
+class RefinancingWithoutCpfOption:   # mesmos campos, com a faixa refinanciável no lugar da entrada mínima
+    requested_amount: float; term: int; installment_amount: float
+    tac_amount: float; boleto_amount: float; insurance_amount: float; iof_amount: float; iof_rate: float
+    total_credit_amount: float; total_debt_amount: float
+    monthly_cet: float; annual_cet: float; monthly_interest_rate: float; annual_interest_rate: float
+    minimum_amount: float; maximum_amount: float
+    approximate_daily_retention: Optional[float] = None
 
 # Simulação consultada (get e list): outro formato; quase todos os campos são Optional
 @dataclass(frozen=True)
@@ -2645,6 +2826,8 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
     def get_refinancing_range(self, license_plate: str) -> list[RefinancingRangeOption]: ...
     def create_financing(self, request: CreateFinancingSimulationV1Request) -> list[SimulationOption]: ...
     def create_refinancing(self, request: CreateRefinancingSimulationV1Request) -> list[SimulationOption]: ...
+    def create_financing_without_cpf(self, request: CreateFinancingWithoutCpfRequest) -> list[FinancingWithoutCpfOption]: ...      # POST v1/proposal/simulation/financing/without-cpf
+    def create_refinancing_without_cpf(self, request: CreateRefinancingWithoutCpfRequest) -> list[RefinancingWithoutCpfOption]: ...  # POST v1/proposal/simulation/refinancing/without-cpf
 ```
 
 ### Features
@@ -2653,6 +2836,7 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 - O SDK envia a `Idempotency-Key` das simulações sozinho (a mesma em todas as tentativas); você não passa chave.
 - Use o `simulation_id` da opção escolhida em `client.proposals.create`. Cada opção gera **uma única proposta** e expira.
 - As rotas v1 (`client.v1.simulations`) não têm `store_cnpj`: a loja de integração é a vinculada ao parceiro. Prefira as rotas v2; use a v1 só em integrações antigas. Numa integração v1, crie e consulte a proposta por `client.v1.proposals`.
+- **Simulação rápida sem CPF** (`create_financing_without_cpf` e `create_refinancing_without_cpf`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `simulation_id` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. Cada opção traz `minimum_down_payment` (financiamento) ou `minimum_amount` e `maximum_amount` (refinanciamento).
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult[Simulation]`).
 - Mostre o CET (`monthly_cet`, `annual_cet`) ao cliente: é o número certo para comparar opções.
 
@@ -2674,6 +2858,14 @@ escolhida = next((o for o in opcoes if o.term == 48), None)   # escolhida.simula
 opcoes_v1 = client.v1.simulations.create_refinancing(
     CreateRefinancingSimulationV1Request(cpf="12345678909", license_plate="ABC1D23", requested_amount=20000)
 )
+
+# Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem simulation_id (não cria proposta)
+sem_cpf = client.v1.simulations.create_financing_without_cpf(
+    CreateFinancingWithoutCpfRequest(license_plate="ABC1D23", vehicle_amount=45000, state="SP")
+)
+refin_sem_cpf = client.v1.simulations.create_refinancing_without_cpf(
+    CreateRefinancingWithoutCpfRequest(license_plate="ABC1D23", requested_amount=20000, state="SP")
+)
 ```
 
 ### Erros e casos de borda
@@ -2684,6 +2876,7 @@ opcoes_v1 = client.v1.simulations.create_refinancing(
 - Refinanciamento: `requested_amount` fora da faixa: `422 Proposal.RequestAmountInvalid` ou `Simulation.Refinancing.AmountOutOfRange`; UF não identificada: `422 Simulation.Refinancing.UfUnavailable`.
 - Sem prazos para o veículo: `422 Simulation.Terms.Unavailable`.
 - `get` de simulação de outro parceiro: `404 Simulation.Access.NotFound`.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `error_code`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disable_automatic_idempotency_key` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.UNKNOWN` se a API ganhar um tipo novo; não lance erro.
@@ -3199,6 +3392,8 @@ final class V1SimulationsClient {                                      // $clien
     public function getRefinancingRange(string $licensePlate): array;
     public function createFinancing(CreateFinancingSimulationRequest $request): array;    // deixe storeCnpj de fora
     public function createRefinancing(CreateRefinancingSimulationRequest $request): array;
+    public function createFinancingWithoutCpf(CreateFinancingWithoutCpfRequest $request): array;       // FinancingWithoutCpfOption[]  (POST v1/proposal/simulation/financing/without-cpf)
+    public function createRefinancingWithoutCpf(CreateRefinancingWithoutCpfRequest $request): array;   // RefinancingWithoutCpfOption[] (POST v1/proposal/simulation/refinancing/without-cpf)
 }
 
 final class CreateFinancingSimulationRequest {
@@ -3214,6 +3409,15 @@ final class CreateRefinancingSimulationRequest {
     public function __construct(string $cpf, string $licensePlate, float $requestedAmount, ?string $storeCnpj = null);
 }
 
+// Sem CPF (namespace Twila\Credicarro\Simulations, em $client->v1->simulations): só placa, valor e UF
+final class CreateFinancingWithoutCpfRequest {
+    public function __construct(string $licensePlate, float $vehicleAmount, string $state, ?float $downPayment = null); // null = entrada mínima da taxa da loja
+}
+
+final class CreateRefinancingWithoutCpfRequest {
+    public function __construct(string $licensePlate, float $requestedAmount, string $state);                           // todos obrigatórios
+}
+
 final class FinancingRangeOption   { public $term; public $minimumDownPayment; }
 final class RefinancingRangeOption { public $term; public $minimumAmount; public $maximumAmount; }
 
@@ -3222,6 +3426,25 @@ final class SimulationOption {
     public $tacAmount; public $boletoAmount; public $insuranceAmount; public $iofAmount; public $iofRate;
     public $totalCreditAmount; public $totalDebtAmount;
     public $monthlyCet; public $annualCet; public $monthlyInterestRate; public $annualInterestRate;
+    public $approximateDailyRetention; // pode ser null
+}
+
+// Opções sem CPF: lista, sem simulationId; os demais campos são os de SimulationOption
+final class FinancingWithoutCpfOption {
+    public $requestedAmount; public $term; public $installmentAmount;
+    public $tacAmount; public $boletoAmount; public $insuranceAmount; public $iofAmount; public $iofRate;
+    public $totalCreditAmount; public $totalDebtAmount;
+    public $monthlyCet; public $annualCet; public $monthlyInterestRate; public $annualInterestRate;
+    public $minimumDownPayment;
+    public $approximateDailyRetention; // pode ser null
+}
+
+final class RefinancingWithoutCpfOption { // mesmos campos, com a faixa refinanciável do prazo no lugar da entrada mínima
+    public $requestedAmount; public $term; public $installmentAmount;
+    public $tacAmount; public $boletoAmount; public $insuranceAmount; public $iofAmount; public $iofRate;
+    public $totalCreditAmount; public $totalDebtAmount;
+    public $monthlyCet; public $annualCet; public $monthlyInterestRate; public $annualInterestRate;
+    public $minimumAmount; public $maximumAmount;
     public $approximateDailyRetention; // pode ser null
 }
 
@@ -3249,6 +3472,7 @@ final class Simulation { // GET v1/proposal/simulation/{id}
 
 - `getFinancingRange` / `getRefinancingRange` devolvem os prazos possíveis para a placa e a loja antes de simular: a entrada mínima (financiamento) ou a faixa de valor (refinanciamento) de cada prazo.
 - `createFinancing` / `createRefinancing` devolvem a lista de `SimulationOption`, uma por prazo elegível. O SDK gera a `Idempotency-Key` e a reaproveita nas retentativas. Na v2, `storeCnpj` é obrigatório: sem ele o SDK lança `CredicarroValidationException` (`Validation.Field.Required`).
+- **Simulação rápida sem CPF** (`createFinancingWithoutCpf` e `createRefinancingWithoutCpf`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `simulationId` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. Cada opção traz `minimumDownPayment` (financiamento) ou `minimumAmount` e `maximumAmount` (refinanciamento).
 - `get($simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
 - As rotas **v1** (`$client->v1->simulations`) não usam o CNPJ da loja (mesmos objetos de requisição, sem `storeCnpj`). Para integrações novas, use a v2.
 
@@ -3266,6 +3490,14 @@ $opcoes = $client->simulations->createFinancing(new CreateFinancingSimulationReq
 foreach ($opcoes as $opcao) {
     echo "{$opcao->term}x de {$opcao->installmentAmount} (CET a.a. {$opcao->annualCet}%)" . PHP_EOL;
 }
+
+// Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem simulationId (não cria proposta)
+$semCpf = $client->v1->simulations->createFinancingWithoutCpf(
+    new CreateFinancingWithoutCpfRequest('ABC1D23', 45000.0, 'SP')
+);
+$refinSemCpf = $client->v1->simulations->createRefinancingWithoutCpf(
+    new CreateRefinancingWithoutCpfRequest('ABC1D23', 20000.0, 'SP')
+);
 ```
 
 ### Erros e casos de borda
@@ -3276,6 +3508,7 @@ foreach ($opcoes as $opcao) {
 - Refinanciamento: `Simulation.Refinancing.AmountOutOfRange` (valor fora da faixa de todos os prazos) e `Simulation.Refinancing.UfUnavailable` (sem UF na placa nem no endereço do cliente).
 - `downPayment` pode ser `0`, mas precisa ser menor que `vehicleAmount` (`Validation.DownPayment.NotBelowVehicleAmount`). `vehicleAmount` deve ser maior que zero.
 - `licensePlate` aceita o padrão antigo (`ABC-1234`) e Mercosul (`ABC1D23`). `state` tem 2 letras.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - `409 Proposal.SimulationIdempotencyConflict`: a `Idempotency-Key` já foi usada com outro conteúdo. Você não informa a chave nas simulações; o SDK gera uma por chamada, então o conflito só aparece se a mesma chamada lógica mudar de conteúdo entre tentativas.
 - Só os prazos elegíveis voltam. Se a lista vier vazia ou o prazo desejado não aparecer, ajuste entrada ou valor.
 - Use um `simulationId` de simulações feitas pela integração. Uma simulação fora de loja gera `Simulation.Access.NotFromStore` ao criar a proposta.
@@ -3791,6 +4024,33 @@ type Simulation struct {
 // Rotas v1: as mesmas requisições, sem StoreCnpj.
 type V1CreateFinancingSimulationRequest struct { Cpf, LicensePlate string; VehicleAmount, DownPayment float64; State string; IsZeroKm bool }
 type V1CreateRefinancingSimulationRequest struct { Cpf, LicensePlate string; RequestedAmount float64 }
+
+// Sem CPF (client.V1.Simulations): só placa, valor e UF
+type CreateFinancingWithoutCpfRequest struct {
+    LicensePlate string
+    VehicleAmount float64
+    DownPayment *float64 // opcional: nil omite valorEntrada e a API usa a entrada mínima da taxa da loja
+    State string
+}
+type CreateRefinancingWithoutCpfRequest struct { LicensePlate string; RequestedAmount float64; State string } // todos obrigatórios
+
+// Opções sem CPF: lista, sem SimulationID; os demais campos são os de SimulationOption
+type FinancingWithoutCpfOption struct {
+    RequestedAmount float64; Term int; InstallmentAmount float64
+    TacAmount, BoletoAmount, InsuranceAmount, IofAmount, IofRate float64
+    TotalCreditAmount, TotalDebtAmount float64
+    MonthlyCet, AnnualCet, MonthlyInterestRate, AnnualInterestRate float64
+    ApproximateDailyRetention *float64 // nil quando não se aplica
+    MinimumDownPayment float64
+}
+type RefinancingWithoutCpfOption struct { // mesmos campos, com a faixa refinanciável do prazo no lugar da entrada mínima
+    RequestedAmount float64; Term int; InstallmentAmount float64
+    TacAmount, BoletoAmount, InsuranceAmount, IofAmount, IofRate float64
+    TotalCreditAmount, TotalDebtAmount float64
+    MonthlyCet, AnnualCet, MonthlyInterestRate, AnnualInterestRate float64
+    ApproximateDailyRetention *float64
+    MinimumAmount, MaximumAmount float64
+}
 ```
 
 ### Métodos
@@ -3808,6 +4068,8 @@ func (c *V1SimulationsClient) GetFinancingRange(ctx context.Context, licensePlat
 func (c *V1SimulationsClient) GetRefinancingRange(ctx context.Context, licensePlate string) ([]RefinancingRangeOption, error)
 func (c *V1SimulationsClient) CreateFinancing(ctx context.Context, req V1CreateFinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error)
 func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1CreateRefinancingSimulationRequest, opts ...RequestOption) ([]SimulationOption, error)
+func (c *V1SimulationsClient) CreateFinancingWithoutCpf(ctx context.Context, req CreateFinancingWithoutCpfRequest, opts ...RequestOption) ([]FinancingWithoutCpfOption, error)       // POST v1/proposal/simulation/financing/without-cpf
+func (c *V1SimulationsClient) CreateRefinancingWithoutCpf(ctx context.Context, req CreateRefinancingWithoutCpfRequest, opts ...RequestOption) ([]RefinancingWithoutCpfOption, error) // POST v1/proposal/simulation/refinancing/without-cpf
 ```
 
 ### Features
@@ -3816,6 +4078,7 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 - Use as rotas v2 com `StoreCnpj` (formatado ou só números). A loja precisa estar vinculada ao parceiro e não pode ter contrato de intermediação. As rotas `client.V1.Simulations` existem para integrações antigas; use as v2.
 - Financiamento: `DownPayment` pode ser `0` (campo `float64` sempre é enviado), deve ser menor que `VehicleAmount` e precisa deixar ao menos 10% do veículo para financiar. `State` tem 2 letras.
 - Refinanciamento: `RequestedAmount` precisa estar dentro da faixa de `GetRefinancingRange`. Consulte a faixa antes de simular para evitar `422`.
+- **Simulação rápida sem CPF** (`CreateFinancingWithoutCpf` e `CreateRefinancingWithoutCpf`, só em `v1`): calcula as parcelas só com placa, valor do veículo (ou valor solicitado) e UF, sem cliente cadastrado e na loja de integração do parceiro. Nada é gravado: as opções não têm `SimulationID` e **não servem para criar proposta** (para isso, simule com o CPF). Não usa `Idempotency-Key` e é segura para repetir. No financiamento a entrada é opcional: omitida, a API usa a entrada mínima da taxa da loja. No refinanciamento só voltam os prazos em cuja faixa o valor cabe. `DownPayment` é `*float64`: `nil` omite a entrada. Cada opção traz `MinimumDownPayment` (financiamento) ou `MinimumAmount` e `MaximumAmount` (refinanciamento).
 - Mostre o CET ao cliente (`MonthlyCet` e `AnnualCet`).
 - Guarde o `SimulationID` da opção escolhida: ele vira o `SimulationID` da proposta, e cada opção gera uma única proposta.
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Passe `WithIdempotencyKey` só se você persiste uma chave por operação.
@@ -3831,12 +4094,21 @@ options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinanci
     Cpf: "12345678909", LicensePlate: "ABC1D23", VehicleAmount: 45000, DownPayment: 9000,
     State: "SP", IsZeroKm: false, StoreCnpj: "11.222.333/0001-81",
 })
+
+// Sem CPF: só placa, valor e UF. Nada é gravado e a opção não tem SimulationID (não cria proposta)
+semCpf, err := client.V1.Simulations.CreateFinancingWithoutCpf(ctx, credicarro.CreateFinancingWithoutCpfRequest{
+    LicensePlate: "ABC1D23", VehicleAmount: 45000, State: "SP", // DownPayment nil: entrada mínima da taxa da loja
+})
+refinSemCpf, err := client.V1.Simulations.CreateRefinancingWithoutCpf(ctx, credicarro.CreateRefinancingWithoutCpfRequest{
+    LicensePlate: "ABC1D23", RequestedAmount: 20000, State: "SP",
+})
 ```
 
 ### Erros e casos de borda
 
 - `404 Customer.Account.NotFound`: cliente sem cadastro. `404 Store.Integration.NotFound`: `StoreCnpj` inexistente ou de outro parceiro.
 - `*BusinessRuleError` (`422`): `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`, `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Simulation.Refinancing.AmountOutOfRange`, `Simulation.Refinancing.UfUnavailable`.
+- Simulação sem CPF: `400` `Validation.Field.Required` (UF ausente), `Validation.Uf.Invalid` e `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound` e `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid` (entrada abaixo do mínimo), `Proposal.RequestAmountInvalid` (valor fora da faixa), `Store.Integration.Intermediation` e `Simulation.Terms.Unavailable`. Não há `404 Customer.Account.NotFound` nem conflito de `Idempotency-Key`: não há cliente nem chave.
 - `409 Proposal.SimulationIdempotencyConflict`: chave reutilizada com outro conteúdo.
 - `*ValidationError` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `simulationID` que não é UUID e `licensePlate` ou `storeCnpj` vazios voltam como `*ConfigurationError`, sem chamar a API.
@@ -4360,6 +4632,23 @@ public static class SimulationsExample
     public static Task<IReadOnlyList<SimulationOption>> SimulateRefinancingV1Async(ICredicarroClient client, CancellationToken ct) =>
         client.V1.Simulations.CreateRefinancingAsync(
             new CreateRefinancingSimulationV1Request(Cpf: "12345678909", LicensePlate: "ABC1D23", RequestedAmount: 15000m), ct);
+    // Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem SimulationId: não cria proposta.
+    public static async Task<IReadOnlyList<FinancingWithoutCpfOption>> SimulateFinancingWithoutCpfAsync(ICredicarroClient client, CancellationToken ct)
+    {
+        // DownPayment é opcional: omitido, a API usa a entrada mínima da taxa da loja.
+        var options = await client.V1.Simulations.CreateFinancingWithoutCpfAsync(
+            new CreateFinancingWithoutCpfRequest(LicensePlate: "ABC1D23", VehicleAmount: 45000m, State: "SP"), ct);
+
+        foreach (var option in options)
+            Console.WriteLine($"{option.Term}x de R$ {option.InstallmentAmount:N2} (entrada mínima R$ {option.MinimumDownPayment:N2})");
+
+        return options;
+    }
+
+    // Só voltam os prazos em cuja faixa o valor cabe; cada opção traz MinimumAmount e MaximumAmount.
+    public static Task<IReadOnlyList<RefinancingWithoutCpfOption>> SimulateRefinancingWithoutCpfAsync(ICredicarroClient client, CancellationToken ct) =>
+        client.V1.Simulations.CreateRefinancingWithoutCpfAsync(
+            new CreateRefinancingWithoutCpfRequest(LicensePlate: "ABC1D23", RequestedAmount: 20000m, State: "SP"), ct);
 }
 ```
 
@@ -4839,9 +5128,13 @@ import twila.credicarro.PagedResult;
 import twila.credicarro.simulations.model.CreateFinancingSimulationRequest;
 import twila.credicarro.simulations.model.CreateRefinancingSimulationRequest;
 import twila.credicarro.simulations.model.FinancingRangeOption;
+import twila.credicarro.simulations.model.FinancingWithoutCpfOption;
 import twila.credicarro.simulations.model.RefinancingRangeOption;
+import twila.credicarro.simulations.model.RefinancingWithoutCpfOption;
 import twila.credicarro.simulations.model.Simulation;
 import twila.credicarro.simulations.model.SimulationOption;
+import twila.credicarro.v1.CreateFinancingWithoutCpfRequest;
+import twila.credicarro.v1.CreateRefinancingWithoutCpfRequest;
 import twila.credicarro.v1.V1CreateFinancingSimulationRequest;
 
 public final class SimulationsExample {
@@ -4913,6 +5206,34 @@ public final class SimulationsExample {
 
     public static List<FinancingRangeOption> financingRangeV1(CredicarroClient client) {
         return client.v1().simulations().getFinancingRange("ABC1D23");
+    }
+    /**
+     * Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem simulationId:
+     * não serve para criar proposta. Sem downPayment, a API usa a entrada mínima da taxa da loja.
+     */
+    public static List<FinancingWithoutCpfOption> createFinancingWithoutCpf(CredicarroClient client) {
+        List<FinancingWithoutCpfOption> options = client.v1().simulations().createFinancingWithoutCpf(
+                CreateFinancingWithoutCpfRequest.builder()
+                        .licensePlate("ABC1D23")
+                        .vehicleAmount(new BigDecimal("45000.00"))
+                        .state("SP")
+                        .build());
+
+        for (FinancingWithoutCpfOption option : options) {
+            System.out.printf("%dx de %s (entrada mínima %s)%n",
+                    option.getTerm(), option.getInstallmentAmount(), option.getMinimumDownPayment());
+        }
+
+        return options;
+    }
+
+    /** Só voltam os prazos em cuja faixa o valor cabe; cada opção traz minimumAmount e maximumAmount. */
+    public static List<RefinancingWithoutCpfOption> createRefinancingWithoutCpf(CredicarroClient client) {
+        return client.v1().simulations().createRefinancingWithoutCpf(CreateRefinancingWithoutCpfRequest.builder()
+                .licensePlate("ABC1D23")
+                .requestedAmount(new BigDecimal("20000.00"))
+                .state("SP")
+                .build());
     }
 }
 ```
@@ -5336,7 +5657,7 @@ export async function updateProfessionalData(cpf: string, data: ProfessionalData
 
 ### Simulations
 ```ts
-import { type SimulationOption } from '@twila/credicarro';
+import { type FinancingWithoutCpfOption, type RefinancingWithoutCpfOption, type SimulationOption } from '@twila/credicarro';
 import { client } from './client';
 
 const LOJA_CNPJ = '11.222.333/0001-81'; // formatado ou só números; precisa estar vinculado ao seu parceiro
@@ -5404,6 +5725,20 @@ export async function simulateFinancingV1(cpf: string, licensePlate: string): Pr
 
 export async function simulateRefinancingV1(cpf: string, licensePlate: string): Promise<SimulationOption[]> {
   return client.v1.simulations.createRefinancing({ cpf, licensePlate, requestedAmount: 20000 });
+}
+
+/** Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem `simulationId`: não cria proposta. */
+export async function simulateFinancingWithoutCpf(licensePlate: string): Promise<FinancingWithoutCpfOption[]> {
+  // `downPayment` é opcional: omitido, a API usa a entrada mínima da taxa da loja.
+  const options = await client.v1.simulations.createFinancingWithoutCpf({ licensePlate, vehicleAmount: 45000, state: 'SP' });
+  options.forEach((option) => console.log(`${option.term}x de R$ ${option.installmentAmount.toFixed(2)} (entrada mínima ${option.minimumDownPayment})`));
+
+  return options;
+}
+
+/** Só voltam os prazos em cuja faixa o valor cabe; cada opção traz a faixa (`minimumAmount` a `maximumAmount`). */
+export async function simulateRefinancingWithoutCpf(licensePlate: string): Promise<RefinancingWithoutCpfOption[]> {
+  return client.v1.simulations.createRefinancingWithoutCpf({ licensePlate, requestedAmount: 20000, state: 'SP' });
 }
 ```
 
@@ -5905,11 +6240,15 @@ from __future__ import annotations
 from twila_credicarro import (
     CreateFinancingSimulationRequest,
     CreateFinancingSimulationV1Request,
+    CreateFinancingWithoutCpfRequest,
     CreateRefinancingSimulationRequest,
     CreateRefinancingSimulationV1Request,
+    CreateRefinancingWithoutCpfRequest,
     FinancingRangeOption,
+    FinancingWithoutCpfOption,
     ListRequest,
     RefinancingRangeOption,
+    RefinancingWithoutCpfOption,
     SimulationOption,
 )
 
@@ -5992,6 +6331,25 @@ def simulate_financing_v1(cpf: str, license_plate: str) -> list[SimulationOption
 def simulate_refinancing_v1(cpf: str, license_plate: str) -> list[SimulationOption]:
     return client.v1.simulations.create_refinancing(
         CreateRefinancingSimulationV1Request(cpf=cpf, license_plate=license_plate, requested_amount=20000)
+    )
+
+
+def simulate_financing_without_cpf(license_plate: str) -> list[FinancingWithoutCpfOption]:
+    """Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não cria proposta."""
+    # `down_payment` é opcional: omitido, a API usa a entrada mínima da taxa da loja.
+    options = client.v1.simulations.create_financing_without_cpf(
+        CreateFinancingWithoutCpfRequest(license_plate=license_plate, vehicle_amount=45000, state="SP")
+    )
+    for option in options:
+        print(f"{option.term}x de R$ {option.installment_amount:.2f} (entrada mínima {option.minimum_down_payment})")
+
+    return options
+
+
+def simulate_refinancing_without_cpf(license_plate: str) -> list[RefinancingWithoutCpfOption]:
+    """Só voltam os prazos em cuja faixa o valor cabe; cada opção traz `minimum_amount` e `maximum_amount`."""
+    return client.v1.simulations.create_refinancing_without_cpf(
+        CreateRefinancingWithoutCpfRequest(license_plate=license_plate, requested_amount=20000, state="SP")
     )
 ```
 
@@ -6499,9 +6857,13 @@ use Twila\Credicarro\CredicarroClient;
 use Twila\Credicarro\ListRequest;
 use Twila\Credicarro\PagedResult;
 use Twila\Credicarro\Simulations\CreateFinancingSimulationRequest;
+use Twila\Credicarro\Simulations\CreateFinancingWithoutCpfRequest;
 use Twila\Credicarro\Simulations\CreateRefinancingSimulationRequest;
+use Twila\Credicarro\Simulations\CreateRefinancingWithoutCpfRequest;
 use Twila\Credicarro\Simulations\FinancingRangeOption;
+use Twila\Credicarro\Simulations\FinancingWithoutCpfOption;
 use Twila\Credicarro\Simulations\RefinancingRangeOption;
+use Twila\Credicarro\Simulations\RefinancingWithoutCpfOption;
 use Twila\Credicarro\Simulations\Simulation;
 use Twila\Credicarro\Simulations\SimulationOption;
 
@@ -6578,6 +6940,35 @@ function createFinancingV1(CredicarroClient $client): array
 function financingRangeV1(CredicarroClient $client): array
 {
     return $client->v1->simulations->getFinancingRange('ABC1D23');
+}
+
+/**
+ * Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem simulationId:
+ * não serve para criar proposta. O quarto argumento (entrada) é opcional: sem ele, a API usa a entrada mínima da taxa da loja.
+ * @return FinancingWithoutCpfOption[]
+ */
+function simulateFinancingWithoutCpf(CredicarroClient $client): array
+{
+    $options = $client->v1->simulations->createFinancingWithoutCpf(
+        new CreateFinancingWithoutCpfRequest('ABC1D23', 45000.0, 'SP')
+    );
+
+    foreach ($options as $option) {
+        echo "{$option->term}x de {$option->installmentAmount} (entrada mínima {$option->minimumDownPayment})" . PHP_EOL;
+    }
+
+    return $options;
+}
+
+/**
+ * Só voltam os prazos em cuja faixa o valor cabe; cada opção traz minimumAmount e maximumAmount.
+ * @return RefinancingWithoutCpfOption[]
+ */
+function simulateRefinancingWithoutCpf(CredicarroClient $client): array
+{
+    return $client->v1->simulations->createRefinancingWithoutCpf(
+        new CreateRefinancingWithoutCpfRequest('ABC1D23', 20000.0, 'SP')
+    );
 }
 ```
 
@@ -7187,6 +7578,34 @@ func simulateFinancingV1(ctx context.Context, client *credicarro.Client) ([]cred
 func simulateRefinancingV1(ctx context.Context, client *credicarro.Client) ([]credicarro.SimulationOption, error) {
 	return client.V1.Simulations.CreateRefinancing(ctx, credicarro.V1CreateRefinancingSimulationRequest{
 		Cpf: "12345678909", LicensePlate: "ABC1D23", RequestedAmount: 15000,
+	})
+}
+
+// simulateFinancingWithoutCpf é a simulação rápida sem CPF (v1): só placa, valor do veículo e UF.
+// Nada é gravado e a opção não tem SimulationID: não cria proposta.
+func simulateFinancingWithoutCpf(ctx context.Context, client *credicarro.Client) ([]credicarro.FinancingWithoutCpfOption, error) {
+	downPayment := 5000.0 // opcional: deixe nil para a API usar a entrada mínima da taxa da loja
+	options, err := client.V1.Simulations.CreateFinancingWithoutCpf(ctx, credicarro.CreateFinancingWithoutCpfRequest{
+		LicensePlate:  "ABC1D23",
+		VehicleAmount: 45000,
+		DownPayment:   &downPayment,
+		State:         "SP",
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, option := range options {
+		fmt.Printf("%dx de R$ %.2f (entrada mínima R$ %.2f)\n", option.Term, option.InstallmentAmount, option.MinimumDownPayment)
+	}
+	return options, nil
+}
+
+// simulateRefinancingWithoutCpf só devolve os prazos em cuja faixa o valor cabe (MinimumAmount a MaximumAmount).
+func simulateRefinancingWithoutCpf(ctx context.Context, client *credicarro.Client) ([]credicarro.RefinancingWithoutCpfOption, error) {
+	return client.V1.Simulations.CreateRefinancingWithoutCpf(ctx, credicarro.CreateRefinancingWithoutCpfRequest{
+		LicensePlate:    "ABC1D23",
+		RequestedAmount: 20000,
+		State:           "SP",
 	})
 }
 ```
