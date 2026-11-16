@@ -66,4 +66,21 @@ public static class SimulationsExample
     public static Task<IReadOnlyList<SimulationOption>> SimulateRefinancingV1Async(ICredicarroClient client, CancellationToken ct) =>
         client.V1.Simulations.CreateRefinancingAsync(
             new CreateRefinancingSimulationV1Request(Cpf: "12345678909", LicensePlate: "ABC1D23", RequestedAmount: 15000m), ct);
+    // Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem SimulationId: não cria proposta.
+    public static async Task<IReadOnlyList<FinancingWithoutCpfOption>> SimulateFinancingWithoutCpfAsync(ICredicarroClient client, CancellationToken ct)
+    {
+        // DownPayment é opcional: omitido, a API usa a entrada mínima da taxa da loja.
+        var options = await client.V1.Simulations.CreateFinancingWithoutCpfAsync(
+            new CreateFinancingWithoutCpfRequest(LicensePlate: "ABC1D23", VehicleAmount: 45000m, State: "SP"), ct);
+
+        foreach (var option in options)
+            Console.WriteLine($"{option.Term}x de R$ {option.InstallmentAmount:N2} (entrada mínima R$ {option.MinimumDownPayment:N2})");
+
+        return options;
+    }
+
+    // Só voltam os prazos em cuja faixa o valor cabe; cada opção traz MinimumAmount e MaximumAmount.
+    public static Task<IReadOnlyList<RefinancingWithoutCpfOption>> SimulateRefinancingWithoutCpfAsync(ICredicarroClient client, CancellationToken ct) =>
+        client.V1.Simulations.CreateRefinancingWithoutCpfAsync(
+            new CreateRefinancingWithoutCpfRequest(LicensePlate: "ABC1D23", RequestedAmount: 20000m, State: "SP"), ct);
 }

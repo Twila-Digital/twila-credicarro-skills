@@ -250,6 +250,53 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$CREDICARRO_BASE_URL/v1/proposal/simulation?pagina_inicial=1&limite=10" | jq "$OCULTA_CPF"
 ```
 
+**Simulação rápida sem CPF (financiamento e refinanciamento)**
+
+Para só mostrar parcelas, sem CPF e sem cliente cadastrado. Usa a loja de integração vinculada ao parceiro (sem `cnpjLoja`), **não grava nada** e a resposta **não tem `id_simulacao`**: não serve para criar proposta (para isso, use a simulação com CPF acima). Não usa `Idempotency-Key` e é segura para repetir.
+
+```bash
+curl -s -X POST "$CREDICARRO_BASE_URL/v1/proposal/simulation/financing/without-cpf" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "placa": "ABC1D23",
+    "valorVeiculo": 45000,
+    "valorEntrada": 5000,
+    "uf": "SP"
+  }' | jq
+```
+`placa`, `valorVeiculo` e `uf` são obrigatórios. `valorEntrada` é opcional: omitido, a API usa a entrada mínima da taxa da loja; abaixo do mínimo, `422` `Proposal.DownPaymentInvalid`.
+
+```bash
+curl -s -X POST "$CREDICARRO_BASE_URL/v1/proposal/simulation/refinancing/without-cpf" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "placa": "ABC1D23",
+    "valorSolicitado": 25000,
+    "uf": "SP"
+  }' | jq
+```
+`placa`, `valorSolicitado` e `uf` são obrigatórios. Só voltam os prazos em cuja faixa o valor cabe (`422` `Proposal.RequestAmountInvalid` se nenhum serve).
+
+As duas respondem `200` com `cotacoes`, **uma opção por prazo** (os mesmos campos da simulação com CPF, sem `id_simulacao`):
+```json
+{
+  "cotacoes": [
+    {
+      "valor_solicitado": 40000, "prazo": 36, "valor_parcela": 2042.42,
+      "valor_tac": 1500, "valor_boleto": 3.5, "valor_seguro": 0,
+      "valor_iof": 872, "percentual_iof": 1.92,
+      "valor_credito_total": 42722, "valor_divida_total": 73527.12,
+      "percentual_cet_mensal": 3.75, "percentual_cet_anual": 55.52,
+      "percentual_juros_mensal": 3.29, "percentual_juros_anual": 47.47,
+      "valor_entrada_minima": 4500
+    }
+  ]
+}
+```
+No financiamento, cada opção traz `valor_entrada_minima`; no refinanciamento, `valor_minimo_refinanciavel` e `valor_maximo_refinanciavel` no lugar dela. `valor_retencao_diaria_aproximado` só aparece quando se aplica.
+
+Erros: `400` `Validation.Field.Required` (`uf` ausente), `Validation.Uf.Invalid`, `Validation.LicensePlate.Invalid`; `403`; `404` `Store.Integration.NotFound`, `Fipe.VehiclePlateNotFound`; `422` `Proposal.DownPaymentInvalid`, `Proposal.RequestAmountInvalid`, `Store.Integration.Intermediation`, `Simulation.Terms.Unavailable`.
+
 ---
 
 ### Propostas (Proposal)

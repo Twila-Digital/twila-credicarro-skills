@@ -12,9 +12,13 @@ import twila.credicarro.PagedResult;
 import twila.credicarro.simulations.model.CreateFinancingSimulationRequest;
 import twila.credicarro.simulations.model.CreateRefinancingSimulationRequest;
 import twila.credicarro.simulations.model.FinancingRangeOption;
+import twila.credicarro.simulations.model.FinancingWithoutCpfOption;
 import twila.credicarro.simulations.model.RefinancingRangeOption;
+import twila.credicarro.simulations.model.RefinancingWithoutCpfOption;
 import twila.credicarro.simulations.model.Simulation;
 import twila.credicarro.simulations.model.SimulationOption;
+import twila.credicarro.v1.CreateFinancingWithoutCpfRequest;
+import twila.credicarro.v1.CreateRefinancingWithoutCpfRequest;
 import twila.credicarro.v1.V1CreateFinancingSimulationRequest;
 
 public final class SimulationsExample {
@@ -86,5 +90,33 @@ public final class SimulationsExample {
 
     public static List<FinancingRangeOption> financingRangeV1(CredicarroClient client) {
         return client.v1().simulations().getFinancingRange("ABC1D23");
+    }
+    /**
+     * Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem simulationId:
+     * não serve para criar proposta. Sem downPayment, a API usa a entrada mínima da taxa da loja.
+     */
+    public static List<FinancingWithoutCpfOption> createFinancingWithoutCpf(CredicarroClient client) {
+        List<FinancingWithoutCpfOption> options = client.v1().simulations().createFinancingWithoutCpf(
+                CreateFinancingWithoutCpfRequest.builder()
+                        .licensePlate("ABC1D23")
+                        .vehicleAmount(new BigDecimal("45000.00"))
+                        .state("SP")
+                        .build());
+
+        for (FinancingWithoutCpfOption option : options) {
+            System.out.printf("%dx de %s (entrada mínima %s)%n",
+                    option.getTerm(), option.getInstallmentAmount(), option.getMinimumDownPayment());
+        }
+
+        return options;
+    }
+
+    /** Só voltam os prazos em cuja faixa o valor cabe; cada opção traz minimumAmount e maximumAmount. */
+    public static List<RefinancingWithoutCpfOption> createRefinancingWithoutCpf(CredicarroClient client) {
+        return client.v1().simulations().createRefinancingWithoutCpf(CreateRefinancingWithoutCpfRequest.builder()
+                .licensePlate("ABC1D23")
+                .requestedAmount(new BigDecimal("20000.00"))
+                .state("SP")
+                .build());
     }
 }

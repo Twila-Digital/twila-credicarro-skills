@@ -8,9 +8,13 @@ use Twila\Credicarro\CredicarroClient;
 use Twila\Credicarro\ListRequest;
 use Twila\Credicarro\PagedResult;
 use Twila\Credicarro\Simulations\CreateFinancingSimulationRequest;
+use Twila\Credicarro\Simulations\CreateFinancingWithoutCpfRequest;
 use Twila\Credicarro\Simulations\CreateRefinancingSimulationRequest;
+use Twila\Credicarro\Simulations\CreateRefinancingWithoutCpfRequest;
 use Twila\Credicarro\Simulations\FinancingRangeOption;
+use Twila\Credicarro\Simulations\FinancingWithoutCpfOption;
 use Twila\Credicarro\Simulations\RefinancingRangeOption;
+use Twila\Credicarro\Simulations\RefinancingWithoutCpfOption;
 use Twila\Credicarro\Simulations\Simulation;
 use Twila\Credicarro\Simulations\SimulationOption;
 
@@ -87,4 +91,33 @@ function createFinancingV1(CredicarroClient $client): array
 function financingRangeV1(CredicarroClient $client): array
 {
     return $client->v1->simulations->getFinancingRange('ABC1D23');
+}
+
+/**
+ * Simulação rápida sem CPF (v1): só placa, valor do veículo e UF. Nada é gravado e a opção não tem simulationId:
+ * não serve para criar proposta. O quarto argumento (entrada) é opcional: sem ele, a API usa a entrada mínima da taxa da loja.
+ * @return FinancingWithoutCpfOption[]
+ */
+function simulateFinancingWithoutCpf(CredicarroClient $client): array
+{
+    $options = $client->v1->simulations->createFinancingWithoutCpf(
+        new CreateFinancingWithoutCpfRequest('ABC1D23', 45000.0, 'SP')
+    );
+
+    foreach ($options as $option) {
+        echo "{$option->term}x de {$option->installmentAmount} (entrada mínima {$option->minimumDownPayment})" . PHP_EOL;
+    }
+
+    return $options;
+}
+
+/**
+ * Só voltam os prazos em cuja faixa o valor cabe; cada opção traz minimumAmount e maximumAmount.
+ * @return RefinancingWithoutCpfOption[]
+ */
+function simulateRefinancingWithoutCpf(CredicarroClient $client): array
+{
+    return $client->v1->simulations->createRefinancingWithoutCpf(
+        new CreateRefinancingWithoutCpfRequest('ABC1D23', 20000.0, 'SP')
+    );
 }
