@@ -195,7 +195,7 @@ Cada webhook ativo do tipo Proposal (`tipo` = 3) recebe o retrato da proposta se
 | --- | --- |
 | `Authorization` | `Basic {credencial}` ou `Bearer {credencial}`, conforme o `tipo_autenticacao` (ausente quando `1`). |
 | `X-CrediCarro-Signature` | `t={timestamp Unix em segundos},v1={HMAC-SHA256 em hex minúsculo}`. |
-| `Idempotency-Key` | `{id_mensagem}:{id_webhook}` — igual em todas as retentativas da mesma notificação. |
+| `Idempotency-Key` | `{id_mensagem}:{id_webhook}` — igual em todas as retentativas da mesma notificação. Um reenvio manual (`POST /v1/webhook/audit/{id}/resend`) chega com `{id_mensagem}:{id_webhook}:{id_tentativa}`: deduplique pelo prefixo para tratá-lo como a mesma notificação. |
 
 Validação da assinatura: concatene `t`, um ponto e o **corpo bruto** (sem reformatar o JSON); calcule o HMAC-SHA256 com o `segredo_assinatura` como chave (o texto do segredo em UTF-8 — não decodifique); compare com `v1` em **tempo constante**; recuse `t` antigo (sugestão: 5 minutos). Cada retentativa é assinada de novo, com novo `t`.
 

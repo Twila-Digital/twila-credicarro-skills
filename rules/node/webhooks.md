@@ -69,6 +69,28 @@ getPendingActions(event: ProposalWebhookEvent): PendingAction[];
 - **Ordem do endpoint:** corpo é `Buffer`? → `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
+### Histórico, gráfico e reenvio
+
+```typescript
+listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;  // GET v1/webhook/audit
+getDeliveryChart(request: WebhookDeliveryChartRequest): Promise<WebhookDeliveryChartPoint[]>;  // GET v1/webhook/audit/chart
+resend(deliveryId: string): Promise<WebhookResendResult>;                                     // POST v1/webhook/audit/{id}/resend
+
+interface WebhookDeliveryFilter {   // datas: string ISO ('2026-11-05' = dia inteiro) ou Date (enviada em UTC)
+  initialDate?: string | Date; finalDate?: string | Date;
+  proposalId?: string; simulationId?: string; proposalNumber?: string; statusCode?: number;
+}
+interface ListWebhookDeliveriesRequest extends WebhookDeliveryFilter { page?: number; pageSize?: number }
+interface WebhookDeliveryChartRequest extends WebhookDeliveryFilter { initialDate: string | Date; finalDate: string | Date }
+interface WebhookDelivery { id: string; webhookId?: string; type: WebhookType; request: string; response: string; statusCode?: number; createdAt: string }
+interface WebhookDeliveryChartPoint { label: string; successCount: number; errorCount: number }
+interface WebhookResendResult { statusCode?: number; response: string }
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ## Exemplo
 (Fonte: `examples/node/webhooks.ts`)
 
@@ -110,3 +132,5 @@ app.post('/webhooks/credicarro', express.raw({ type: '*/*', limit: '1mb' }), asy
 - Para trocar a autenticação de um webhook, exclua-o e cadastre outro (`update` não altera a autenticação, e o novo cadastro traz novo `signingSecret`).
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).

@@ -64,6 +64,22 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Não gere a sua.
 - `ListAsync` e `GetAsync` devolvem o retrato completo de simulações já criadas (`Simulation`). `Type` vem do nome e cai em `SimulationType.Unknown` para valor novo.
 
+### Retorno de comissão
+
+```csharp
+// GET v2/proposal/simulation/commission-returns
+Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default);
+
+public sealed record CommissionReturn(SimulationType Type, CommissionReturnTarget Target, int MinimumReturn, int MaximumReturn, bool AllowsDefaultRate);
+public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
+// CreateFinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
+// CreateRefinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
+// As requisições V1 não têm CommissionReturn; null não é enviado.
+```
+
+- Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `CommissionReturn`.
+
 ## Exemplo
 
 (Fonte: `examples/dotnet/simulations.cs`)
@@ -84,3 +100,4 @@ var chosen = options.OrderBy(o => o.InstallmentAmount).First();
 - `CredicarroValidationException` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `ApproximateDailyRetention` é `null` quando não se aplica: mantenha o campo nulo.
 - Em `Simulation`, `Transaction`, `Interest`, `Cet`, `Iof` e `Vehicle` podem vir `null`; teste antes de acessar.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

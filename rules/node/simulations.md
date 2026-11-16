@@ -77,6 +77,28 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult<Simulation>`).
 - Mostre o CET (`monthlyCet`, `annualCet`) ao cliente: é o número certo para comparar opções.
 
+### Retorno de comissão
+
+```typescript
+// GET v2/proposal/simulation/commission-returns
+getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;   // [] se a loja não tiver retorno configurado
+
+interface CommissionReturn {
+  type: SimulationType;               // Financing | Refinancing
+  target: CommissionReturnTarget;     // Store | Organization | Unknown
+  minimumReturn: number; maximumReturn: number; allowsDefaultRate: boolean;
+}
+// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commissionReturn?: number
+// As requisições V1 não têm commissionReturn.
+
+const faixa = (await client.simulations.getCommissionReturns(loja))
+  .find((f) => f.type === SimulationType.Financing && f.target === CommissionReturnTarget.Store);
+await client.simulations.createFinancing({ ...simulacao, commissionReturn: faixa?.maximumReturn });
+```
+
+- Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commissionReturn`.
+
 ## Exemplo
 (Fonte: `examples/node/simulations.ts`)
 
@@ -104,3 +126,4 @@ const opcoesV1 = await client.v1.simulations.createRefinancing({ cpf: '123456789
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `errorCode`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disableAutomaticIdempotencyKey` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.Unknown` se a API ganhar um tipo novo; não lance erro.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

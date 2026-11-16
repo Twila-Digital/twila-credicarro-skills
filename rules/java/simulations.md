@@ -77,6 +77,24 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 - `get(simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
 - As rotas **v1** (`client.v1().simulations()`) não recebem o CNPJ da loja. Para integrações novas, use a v2.
 
+### Retorno de comissão
+
+```java
+// GET v2/proposal/simulation/commission-returns
+List<CommissionReturn> getCommissionReturns(String storeCnpj);   // vazio se não houver retorno
+
+@Value public class CommissionReturn {
+    SimulationType type;                 // FINANCING | REFINANCING
+    CommissionReturnTarget target;       // STORE | ORGANIZATION | UNKNOWN
+    int minimumReturn; int maximumReturn; boolean allowsDefaultRate;
+}
+// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): .commissionReturn(Integer) no builder
+// As requisições V1 não têm commissionReturn; null não é enviado.
+```
+
+- Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commissionReturn`.
+
 ## Exemplo
 
 (Fonte: `examples/java/simulations.java`)
@@ -107,3 +125,4 @@ for (SimulationOption opcao : opcoes)
 - Use um `simulationId` de simulações feitas pela integração. Uma simulação fora de loja gera `Simulation.Access.NotFromStore` ao criar a proposta.
 - Mostre `getMonthlyCet()` e `getAnnualCet()` ao cliente: o CET reúne juros, tarifas e impostos.
 - Campos monetários e percentuais são `BigDecimal`, em reais. `getApproximateDailyRetention()` pode ser `null`. Em `Simulation`, `getTerm()` é `Long` e `SimulationVehicle` expõe `getZeroKm()` (`Boolean`, pode ser `null`).
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

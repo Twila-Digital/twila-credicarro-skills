@@ -23,9 +23,9 @@ Para **integração por código**, leia o arquivo do módulo e da linguagem:
 
 - **Client** (instalação, configuração, ambientes, token, retry, `Idempotency-Key`, paginação, erros): dotnet / java / node / python / php / go
 - **Customers** (cadastro unificado, dados pessoais, endereço, ocupação e renda): dotnet / java / node / python / php / go
-- **Simulations** (faixas, simulação de financiamento e refinanciamento, consulta, listagem, rotas `/v1`): dotnet / java / node / python / php / go
+- **Simulations** (faixas, retornos de comissão, simulação de financiamento e refinanciamento, consulta, listagem, rotas `/v1`): dotnet / java / node / python / php / go
 - **Proposals** (criar, consultar, listar, ações pendentes, documentos, dados do veículo, conta de recebimento, rotas `/v1`): dotnet / java / node / python / php / go
-- **Webhooks** (cadastrar, listar, editar, excluir, verificar assinatura, endpoint de recebimento): dotnet / java / node / python / php / go
+- **Webhooks** (cadastrar, listar, editar, excluir, histórico, gráfico e reenvio de envios, verificar assinatura, endpoint de recebimento): dotnet / java / node / python / php / go
 - **Security** (credenciais, logs, LGPD, webhooks, resiliência): dotnet / java / node / python / php / go
 
 Ferramentas de apoio:
@@ -235,7 +235,7 @@ Cada webhook ativo do tipo Proposal (`tipo` = 3) recebe o retrato da proposta se
 | --- | --- |
 | `Authorization` | `Basic {credencial}` ou `Bearer {credencial}`, conforme o `tipo_autenticacao` (ausente quando `1`). |
 | `X-CrediCarro-Signature` | `t={timestamp Unix em segundos},v1={HMAC-SHA256 em hex minúsculo}`. |
-| `Idempotency-Key` | `{id_mensagem}:{id_webhook}` — igual em todas as retentativas da mesma notificação. |
+| `Idempotency-Key` | `{id_mensagem}:{id_webhook}` — igual em todas as retentativas da mesma notificação. Um reenvio manual (`POST /v1/webhook/audit/{id}/resend`) chega com `{id_mensagem}:{id_webhook}:{id_tentativa}`: deduplique pelo prefixo para tratá-lo como a mesma notificação. |
 
 Validação da assinatura: concatene `t`, um ponto e o **corpo bruto** (sem reformatar o JSON); calcule o HMAC-SHA256 com o `segredo_assinatura` como chave (o texto do segredo em UTF-8 — não decodifique); compare com `v1` em **tempo constante**; recuse `t` antigo (sugestão: 5 minutos). Cada retentativa é assinada de novo, com novo `t`.
 
@@ -350,7 +350,7 @@ CHAVE=$(uuidgen)   # gere antes e guarde: repita a MESMA operação com a mesma 
 
 Gere a chave uma vez por operação, numa variável, **antes** do comando — nunca `$(uuidgen)` dentro do `curl`, que gera uma chave nova a cada repetição. As rotas de webhook, dados do veículo e conta de recebimento não usam o header.
 
-Quando repetir: só `408`, `429` (respeitando `Retry-After`), `500`, `502`, `503`, `504`, timeout ou falha de rede — nunca outros `4xx` — e só em operações seguras: `GET`, `POST` com a mesma `Idempotency-Key`, dados do veículo, conta de recebimento e `PUT`/`DELETE` de webhook. **Não repita** `POST /v1/webhook` (cadastraria outro webhook) nem `POST /v1/customer/unified` sem chave: liste os webhooks ou consulte o cadastro antes de tentar de novo.
+Quando repetir: só `408`, `429` (respeitando `Retry-After`), `500`, `502`, `503`, `504`, timeout ou falha de rede — nunca outros `4xx` — e só em operações seguras: `GET`, `POST` com a mesma `Idempotency-Key`, dados do veículo, conta de recebimento e `PUT`/`DELETE` de webhook. **Não repita** `POST /v1/webhook` (cadastraria outro webhook), `POST /v1/webhook/audit/{id}/resend` (dispararia o webhook de novo) nem `POST /v1/customer/unified` sem chave: liste os webhooks ou consulte o cadastro antes de tentar de novo.
 
 ---
 
@@ -450,6 +450,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 Resposta: `{"opcoes_por_prazo": [{"prazo": 36, "valor_minimo_refinanciavel": 5000, "valor_maximo_refinanciavel": 35720}, ...]}`.
 
 Sem prazos para o veículo, as duas faixas retornam `422` `Simulation.Terms.Unavailable`.
+
+**Retornos de comissão da loja (opcional)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v2/proposal/simulation/commission-returns?cnpjLoja=11222333000181" | jq
+```
+Resposta: `{"retornos_comissao": [{"tipo": "Financing", "alvo": "Store", "retorno_minimo": 0, "retorno_maximo": 6, "permite_taxa_padrao": true}, ...]}`. Lista vazia: a loja não tem retorno configurado. Para usar, envie `"retornoComissao"` (inteiro) nas simulações abaixo, dentro da faixa do mesmo `tipo` com `alvo` `Store`. Fora da faixa: `422` `Store.CommissionReturn.OutOfRange`; sem faixa configurada: `422` `Store.CommissionReturn.NotConfigured`. Sem o campo, vale a taxa padrão.
 
 **Simular financiamento**
 ```bash
@@ -643,6 +650,27 @@ curl -s -o /dev/null -w '%{http_code}\n' -X PUT "$CREDICARRO_BASE_URL/v1/webhook
 curl -s -o /dev/null -w '%{http_code}\n' -X DELETE "$CREDICARRO_BASE_URL/v1/webhook/WEBHOOK_ID" \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+**Histórico de envios (paginado; filtros opcionais)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v1/webhook/audit?data_inicial=2026-11-01&data_final=2026-11-07&status_http=500&pagina_inicial=1&limite=10" \
+  | jq '{pagina, itens: [.itens[] | {id_auditoria, tipo, status_http, data_criacao}]}'
+```
+Filtros: `data_inicial`, `data_final` (data sem horário vale pelo dia inteiro), `id_proposta`, `id_simulacao`, `numero_proposta`, `status_http`. Cada item traz também `requisicao` e `resposta` (corpos completos, com dados pessoais): não os exiba inteiros no chat.
+
+**Gráfico de envios (período obrigatório, até 31 dias)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v1/webhook/audit/chart?data_inicial=2026-11-01&data_final=2026-11-07" | jq
+```
+Resposta: `[{"rotulo": "01", "sucessos": 42, "erros": 0}, ...]`, no horário de Brasília (`"10m"` até 1 hora, `"14h"` até 1 dia, `"05"` acima disso).
+
+**Reenviar um envio** (sem corpo; peça confirmação ao usuário antes — dispara o webhook de novo)
+```bash
+curl -s -X POST "$CREDICARRO_BASE_URL/v1/webhook/audit/ID_AUDITORIA/resend" -H "Authorization: Bearer $TOKEN" | jq '{status_http}'
+```
+Resposta `200`: `{"status_http": 200, "resposta": "..."}` (`status_http` nulo quando a URL não respondeu). **Não repita** em caso de falha: confira o histórico antes. `404` `Webhook.Audit.NotFound`: envio inexistente ou de outro parceiro. O reenvio chega com `Idempotency-Key` nova (`{id_mensagem}:{id_webhook}:{id_tentativa}`).
 
 Cada notificação é um `POST` JSON assinado com `X-CrediCarro-Signature: t={unix},v1={hex}` (HMAC-SHA256 de `"{t}.{corpo bruto}"` com o `segredo_assinatura`). Para conferir uma assinatura recebida:
 
@@ -916,6 +944,22 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Não gere a sua.
 - `ListAsync` e `GetAsync` devolvem o retrato completo de simulações já criadas (`Simulation`). `Type` vem do nome e cai em `SimulationType.Unknown` para valor novo.
 
+#### Retorno de comissão
+
+```csharp
+// GET v2/proposal/simulation/commission-returns
+Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default);
+
+public sealed record CommissionReturn(SimulationType Type, CommissionReturnTarget Target, int MinimumReturn, int MaximumReturn, bool AllowsDefaultRate);
+public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
+// CreateFinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
+// CreateRefinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
+// As requisições V1 não têm CommissionReturn; null não é enviado.
+```
+
+- Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `CommissionReturn`.
+
 ### Exemplo
 
 (Fonte: `examples/dotnet/simulations.cs`)
@@ -936,6 +980,7 @@ var chosen = options.OrderBy(o => o.InstallmentAmount).First();
 - `CredicarroValidationException` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `ApproximateDailyRetention` é `null` quando não se aplica: mantenha o campo nulo.
 - Em `Simulation`, `Transaction`, `Interest`, `Cet`, `Iof` e `Vehicle` podem vir `null`; teste antes de acessar.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.
 ### Proposals
 
 `IProposalsClient` (como `client.Proposals`) cria a proposta, acompanha as etapas e envia o que a Credicarro pede ao integrador (documentos, dados do veículo e conta de recebimento). O significado de status, etapas e situações está em [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). As rotas v1 ficam em `client.V1.Proposals`.
@@ -1103,6 +1148,24 @@ public static class CredicarroWebhookEvent   // namespace Credicarro.Webhooks
 
 O SDK usa o relógio atual, e o timestamp do vetor é antigo: para testar, passe `tolerance: TimeSpan.MaxValue`.
 
+#### Histórico, gráfico e reenvio
+
+```csharp
+Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);  // GET v1/webhook/audit
+Task<IReadOnlyList<WebhookDeliveryChartPoint>> GetDeliveryChartAsync(WebhookDeliveryFilter filter, CancellationToken cancellationToken = default);               // GET v1/webhook/audit/chart
+Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);                                                         // POST v1/webhook/audit/{id}/resend
+
+public sealed record WebhookDeliveryFilter(DateTimeOffset? InitialDate = null, DateTimeOffset? FinalDate = null, Guid? ProposalId = null,
+    Guid? SimulationId = null, string? ProposalNumber = null, int? StatusCode = null);
+public sealed record WebhookDelivery(Guid Id, Guid? WebhookId, WebhookType Type, string Request, string Response, int? StatusCode, DateTimeOffset CreatedAt);
+public sealed record WebhookDeliveryChartPoint(string Label, int SuccessCount, int ErrorCount);
+public sealed record WebhookResendResult(int? StatusCode, string Response);
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ### Exemplo
 
 (Fonte: `examples/dotnet/webhooks.cs`)
@@ -1137,6 +1200,8 @@ var evt = CredicarroWebhookEvent.ParseUnverified(rawBody);   // já verificado a
 - `ProposalWebhookEvent.GetPendingActions()` aplica a mesma regra de `ProposalDetails.GetPendingActions()` ao evento **detalhado**; o evento simples não traz etapas (lista vazia), então consulte a proposta. O `ToString` do evento mascara CPF e motivo da recusa.
 - Troque o `ConcurrentDictionary` do exemplo por Redis ou banco com expiração; ele só vale para uma instância.
 - Webhooks de staging e de produção são separados. Veja security.md.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Regras para integrar com o Credicarro em .NET, com o SDK `Twila.Credicarro`, sem expor credenciais nem dados pessoais.
@@ -1488,6 +1553,24 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 - `get(simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
 - As rotas **v1** (`client.v1().simulations()`) não recebem o CNPJ da loja. Para integrações novas, use a v2.
 
+#### Retorno de comissão
+
+```java
+// GET v2/proposal/simulation/commission-returns
+List<CommissionReturn> getCommissionReturns(String storeCnpj);   // vazio se não houver retorno
+
+@Value public class CommissionReturn {
+    SimulationType type;                 // FINANCING | REFINANCING
+    CommissionReturnTarget target;       // STORE | ORGANIZATION | UNKNOWN
+    int minimumReturn; int maximumReturn; boolean allowsDefaultRate;
+}
+// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): .commissionReturn(Integer) no builder
+// As requisições V1 não têm commissionReturn; null não é enviado.
+```
+
+- Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commissionReturn`.
+
 ### Exemplo
 
 (Fonte: `examples/java/simulations.java`)
@@ -1518,6 +1601,7 @@ for (SimulationOption opcao : opcoes)
 - Use um `simulationId` de simulações feitas pela integração. Uma simulação fora de loja gera `Simulation.Access.NotFromStore` ao criar a proposta.
 - Mostre `getMonthlyCet()` e `getAnnualCet()` ao cliente: o CET reúne juros, tarifas e impostos.
 - Campos monetários e percentuais são `BigDecimal`, em reais. `getApproximateDailyRetention()` pode ser `null`. Em `Simulation`, `getTerm()` é `Long` e `SimulationVehicle` expõe `getZeroKm()` (`Boolean`, pode ser `null`).
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.
 ### Proposals
 
 A proposta é a solicitação de crédito criada a partir de uma opção de simulação. Ela traz o status geral e, para cada participante (comprador, loja e vendedor), a etapa ativa e quem precisa agir. Para o significado de cada status, etapa e situação, leia [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). `twila.credicarro.proposals` (e `twila.credicarro.v1` para as rotas v1) usa o `CredicarroClient` de client.
@@ -1703,6 +1787,25 @@ Vetor de teste da documentação (a verificação do SDK precisa aceitá-lo):
 
 O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe uma tolerância longa: `CredicarroWebhookEvent.parse(corpo, "t=1715792400,v1=db66...8df2", "segredo-de-exemplo", Duration.ofDays(100000))` devolve o evento com `APPROVED`. O `t` do cabeçalho de produção é validado; nunca use `parseUnverified` num endpoint.
 
+#### Histórico, gráfico e reenvio
+
+```java
+PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);   // GET v1/webhook/audit (listDeliveries() sem filtros)
+List<WebhookDeliveryChartPoint> getDeliveryChart(WebhookDeliveryFilter filter);                   // GET v1/webhook/audit/chart
+WebhookResendResult resend(UUID deliveryId);                                                      // POST v1/webhook/audit/{id}/resend
+
+@Value @Builder(toBuilder = true) public class WebhookDeliveryFilter {
+    OffsetDateTime initialDate; OffsetDateTime finalDate; UUID proposalId; UUID simulationId; String proposalNumber; Integer statusCode;
+}
+@Value public class WebhookDelivery { UUID id; UUID webhookId; WebhookType type; String request; String response; Integer statusCode; OffsetDateTime createdAt; }
+@Value public class WebhookDeliveryChartPoint { String label; int successCount; int errorCount; }
+@Value public class WebhookResendResult { Integer statusCode; String response; }
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ### Exemplo
 
 (Fonte: `examples/java/webhooks.java`)
@@ -1740,6 +1843,8 @@ O endpoint rejeita `Content-Length` acima de 1 MiB (`413`), confere o `Authoriza
 - Cadastro: a `url` precisa ser HTTPS pública (sem localhost, IP privado, usuário/senha ou fragmento): `422 Organization.Webhook.InvalidEndpoint` (`CredicarroBusinessRuleException`). `credential` é obrigatória em BASIC e JWT; senão `400 Validation.Field.Required`. Pode haver mais de um webhook por tipo.
 - `update` troca `type`, `url` e `status`, mas não a autenticação. Para trocá-la, exclua e cadastre outro (e guarde o novo segredo). Erros: `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - A listagem não devolve credencial nem segredo.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro em Java usando o SDK. Valem para o `CredicarroClient` (client) e para o endpoint de webhook (webhooks).
@@ -2066,6 +2171,28 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult<Simulation>`).
 - Mostre o CET (`monthlyCet`, `annualCet`) ao cliente: é o número certo para comparar opções.
 
+#### Retorno de comissão
+
+```typescript
+// GET v2/proposal/simulation/commission-returns
+getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;   // [] se a loja não tiver retorno configurado
+
+interface CommissionReturn {
+  type: SimulationType;               // Financing | Refinancing
+  target: CommissionReturnTarget;     // Store | Organization | Unknown
+  minimumReturn: number; maximumReturn: number; allowsDefaultRate: boolean;
+}
+// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commissionReturn?: number
+// As requisições V1 não têm commissionReturn.
+
+const faixa = (await client.simulations.getCommissionReturns(loja))
+  .find((f) => f.type === SimulationType.Financing && f.target === CommissionReturnTarget.Store);
+await client.simulations.createFinancing({ ...simulacao, commissionReturn: faixa?.maximumReturn });
+```
+
+- Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commissionReturn`.
+
 ### Exemplo
 (Fonte: `examples/node/simulations.ts`)
 
@@ -2093,6 +2220,7 @@ const opcoesV1 = await client.v1.simulations.createRefinancing({ cpf: '123456789
 - Todos os `422` chegam como `CredicarroBusinessRuleError`; trate pelo `errorCode`.
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disableAutomaticIdempotencyKey` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.Unknown` se a API ganhar um tipo novo; não lance erro.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.
 ### Proposals
 
 A proposta é a solicitação de crédito, criada a partir de uma opção de simulação. Para cada participante (comprador, loja e, quando houver, vendedor), ela traz a etapa ativa e quem precisa agir. Os códigos de status, etapa, situação, responsável, biometria e documento estão em [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). Acesse por `client.proposals` (v2) e `client.v1.proposals` (v1), usando o cliente único de client.md.
@@ -2282,6 +2410,28 @@ getPendingActions(event: ProposalWebhookEvent): PendingAction[];
 - **Ordem do endpoint:** corpo é `Buffer`? → `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
+#### Histórico, gráfico e reenvio
+
+```typescript
+listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;  // GET v1/webhook/audit
+getDeliveryChart(request: WebhookDeliveryChartRequest): Promise<WebhookDeliveryChartPoint[]>;  // GET v1/webhook/audit/chart
+resend(deliveryId: string): Promise<WebhookResendResult>;                                     // POST v1/webhook/audit/{id}/resend
+
+interface WebhookDeliveryFilter {   // datas: string ISO ('2026-11-05' = dia inteiro) ou Date (enviada em UTC)
+  initialDate?: string | Date; finalDate?: string | Date;
+  proposalId?: string; simulationId?: string; proposalNumber?: string; statusCode?: number;
+}
+interface ListWebhookDeliveriesRequest extends WebhookDeliveryFilter { page?: number; pageSize?: number }
+interface WebhookDeliveryChartRequest extends WebhookDeliveryFilter { initialDate: string | Date; finalDate: string | Date }
+interface WebhookDelivery { id: string; webhookId?: string; type: WebhookType; request: string; response: string; statusCode?: number; createdAt: string }
+interface WebhookDeliveryChartPoint { label: string; successCount: number; errorCount: number }
+interface WebhookResendResult { statusCode?: number; response: string }
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ### Exemplo
 (Fonte: `examples/node/webhooks.ts`)
 
@@ -2323,6 +2473,8 @@ app.post('/webhooks/credicarro', express.raw({ type: '*/*', limit: '1mb' }), asy
 - Para trocar a autenticação de um webhook, exclua-o e cadastre outro (`update` não altera a autenticação, e o novo cadastro traz novo `signingSecret`).
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro usando o SDK `@twila/credicarro`.
@@ -2656,6 +2808,26 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult[Simulation]`).
 - Mostre o CET (`monthly_cet`, `annual_cet`) ao cliente: é o número certo para comparar opções.
 
+#### Retorno de comissão
+
+```python
+# GET v2/proposal/simulation/commission-returns
+def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...   # [] se não houver retorno
+
+class CommissionReturn:
+    type: SimulationType                # FINANCING | REFINANCING
+    target: CommissionReturnTarget      # STORE | ORGANIZATION | UNKNOWN
+    minimum_return: int; maximum_return: int; allows_default_rate: bool
+# CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commission_return: Optional[int] = None
+# As requisições V1 não têm commission_return.
+
+faixa = next((f for f in client.simulations.get_commission_returns(loja)
+              if f.type == SimulationType.FINANCING and f.target == CommissionReturnTarget.STORE), None)
+```
+
+- Consulte as faixas antes de simular e envie `commission_return` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commission_return`.
+
 ### Exemplo
 (Fonte: `examples/python/simulations.py`)
 
@@ -2688,6 +2860,7 @@ opcoes_v1 = client.v1.simulations.create_refinancing(
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disable_automatic_idempotency_key` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.UNKNOWN` se a API ganhar um tipo novo; não lance erro.
 - Campos de `Simulation` podem ser `None`: não assuma que `vehicle`, `iof` ou `cet` estão sempre presentes.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.
 ### Proposals
 
 A proposta é a solicitação de crédito, criada a partir de uma opção de simulação. Para cada participante (comprador, loja e, quando houver, vendedor), ela traz a etapa ativa e quem precisa agir. Os códigos de status, etapa, situação, responsável, biometria e documento estão em [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). Acesse por `client.proposals` (v2) e `client.v1.proposals` (v1), usando o cliente único de client.md.
@@ -2894,6 +3067,25 @@ parse_webhook_payload(raw_body) -> ProposalWebhookEvent        # SEM verificar a
 - **Ordem do endpoint:** `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
+#### Histórico, gráfico e reenvio
+
+```python
+def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...  # GET v1/webhook/audit
+def get_delivery_chart(self, request: WebhookDeliveryChartRequest) -> list[WebhookDeliveryChartPoint]: ...            # GET v1/webhook/audit/chart
+def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...                                                  # POST v1/webhook/audit/{id}/resend
+
+# Datas: str ISO, date (dia inteiro) ou datetime (sem fuso: -03:00)
+class ListWebhookDeliveriesRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code; page = 1; page_size = 10
+class WebhookDeliveryChartRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code   # período obrigatório
+class WebhookDelivery: id: str; type: WebhookType; request: str; response: str; created_at: Optional[datetime]; webhook_id: Optional[str]; status_code: Optional[int]
+class WebhookDeliveryChartPoint: label: str; success_count: int; error_count: int
+class WebhookResendResult: response: str; status_code: Optional[int]
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ### Exemplo
 (Fonte: `examples/python/webhooks.py`)
 
@@ -2942,6 +3134,8 @@ def credicarro_webhook():
 - Para trocar a autenticação de um webhook, exclua-o e cadastre outro (`update` não altera a autenticação, e o novo cadastro traz novo `signing_secret`).
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro usando o SDK `twila-credicarro`.
@@ -3252,6 +3446,27 @@ final class Simulation { // GET v1/proposal/simulation/{id}
 - `get($simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
 - As rotas **v1** (`$client->v1->simulations`) não usam o CNPJ da loja (mesmos objetos de requisição, sem `storeCnpj`). Para integrações novas, use a v2.
 
+#### Retorno de comissão
+
+```php
+// GET v2/proposal/simulation/commission-returns
+public function getCommissionReturns(string $storeCnpj): array;   // CommissionReturn[]; [] se não houver retorno
+
+final class CommissionReturn {
+    public $type;            // SimulationType::FINANCING | REFINANCING
+    public $typeRaw;
+    public $target;          // CommissionReturnTarget::STORE | ORGANIZATION | UNKNOWN
+    public $targetRaw;
+    public $minimumReturn; public $maximumReturn; public $allowsDefaultRate;
+}
+// CreateFinancingSimulationRequest(..., ?string $storeCnpj = null, ?int $commissionReturn = null)
+// CreateRefinancingSimulationRequest(..., ?string $storeCnpj = null, ?int $commissionReturn = null)
+// Só enviado na v2; null não é enviado.
+```
+
+- Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commissionReturn`.
+
 ### Exemplo
 
 (Fonte: `examples/php/simulations.php`)
@@ -3281,6 +3496,7 @@ foreach ($opcoes as $opcao) {
 - Use um `simulationId` de simulações feitas pela integração. Uma simulação fora de loja gera `Simulation.Access.NotFromStore` ao criar a proposta.
 - Mostre `monthlyCet` e `annualCet` ao cliente: o CET reúne juros, tarifas e impostos.
 - Valores monetários e percentuais são `float`, em reais; para cálculos, use centavos inteiros ou `bcmath`. `approximateDailyRetention` pode ser `null`; `createdAt` é uma `string` ISO-8601.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.
 ### Proposals
 
 A proposta é a solicitação de crédito criada a partir de uma opção de simulação. Ela traz o status geral e, para cada participante (comprador, loja e vendedor), a etapa ativa e quem precisa agir. Para o significado de cada status, etapa e situação, leia [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). `Twila\Credicarro\Proposals` (e `$client->v1->proposals` para as rotas v1) usa o `CredicarroClient` de client.
@@ -3469,6 +3685,25 @@ Vetor de teste da documentação (a verificação do SDK precisa aceitá-lo):
 
 O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe o relógio: `CredicarroWebhookEvent::verifySignature($corpo, 't=1715792400,v1=db66...8df2', 'segredo-de-exemplo', 300, 1715792400)` devolve `true`.
 
+#### Histórico, gráfico e reenvio
+
+```php
+public function listDeliveries(?WebhookDeliveryFilter $filter = null, ?ListRequest $paging = null): PagedResult;  // GET v1/webhook/audit (WebhookDelivery)
+public function getDeliveryChart(WebhookDeliveryFilter $filter): array;   // GET v1/webhook/audit/chart (WebhookDeliveryChartPoint[])
+public function resend(string $deliveryId): WebhookResendResult;          // POST v1/webhook/audit/{id}/resend
+
+// Datas em texto ISO: '2026-11-05' vale pelo dia inteiro
+new WebhookDeliveryFilter(?string $initialDate = null, ?string $finalDate = null, ?string $proposalId = null,
+    ?string $simulationId = null, ?string $proposalNumber = null, ?int $statusCode = null);
+final class WebhookDelivery { public $id; public $webhookId; public $type; public $typeRaw; public $request; public $response; public $statusCode; public $createdAt; }
+final class WebhookDeliveryChartPoint { public $label; public $successCount; public $errorCount; }
+final class WebhookResendResult { public $statusCode; public $response; }
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ### Exemplo
 
 (Fonte: `examples/php/webhooks.php`)
@@ -3505,6 +3740,8 @@ Configuração do endpoint:
 - Cadastro: a `url` precisa ser HTTPS pública (sem localhost, IP privado, usuário/senha ou fragmento): `422 Organization.Webhook.InvalidEndpoint` (`CredicarroBusinessRuleException`). `credential` é obrigatória em BASIC e JWT; senão `400 Validation.Field.Required`. Pode haver mais de um webhook por tipo.
 - `update` troca `type`, `url` e `status`, mas não a autenticação. Para trocá-la, exclua e cadastre outro (e guarde o novo segredo). Erros: `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - A listagem não devolve credencial nem segredo.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro em PHP usando o SDK. Valem para o `CredicarroClient` (client) e para o endpoint de webhook (webhooks).
@@ -3821,6 +4058,25 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Passe `WithIdempotencyKey` só se você persiste uma chave por operação.
 - `Get` e `List` devolvem o retrato completo de simulações já criadas. `Type` vem do nome e cai em `SimulationTypeUnknown` para valor novo (o texto original fica em `TypeRaw`).
 
+#### Retorno de comissão
+
+```go
+// GET v2/proposal/simulation/commission-returns
+func (c *SimulationsClient) GetCommissionReturns(ctx context.Context, storeCnpj string) ([]CommissionReturn, error)
+
+type CommissionReturn struct {
+    Type SimulationType; TypeRaw string                 // Financing | Refinancing
+    Target CommissionReturnTarget; TargetRaw string     // CommissionReturnTargetStore | ...Organization | ...Unknown
+    MinimumReturn, MaximumReturn int
+    AllowsDefaultRate bool
+}
+// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): CommissionReturn *int (nil não é enviado)
+// As requisições V1 não têm CommissionReturn.
+```
+
+- Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `CommissionReturn`.
+
 ### Exemplo
 
 (Fonte: `examples/go/simulations.go`)
@@ -3841,6 +4097,7 @@ options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinanci
 - `*ValidationError` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `simulationID` que não é UUID e `licensePlate` ou `storeCnpj` vazios voltam como `*ConfigurationError`, sem chamar a API.
 - `ApproximateDailyRetention` é `nil` quando não se aplica: teste antes de usar. Em `Simulation.Vehicle`, `Year`, `Value` e `IsZeroKm` também são ponteiros.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.
 ### Proposals
 
 `ProposalsClient` (como `client.Proposals`) cria a proposta, acompanha as etapas e envia o que a Credicarro pede ao integrador (documentos, dados do veículo e conta de recebimento). O significado de status, etapas e situações está em [Etapas e status da proposta](#regras-etapas-e-status-da-proposta). As rotas v1 ficam em `client.V1.Proposals`.
@@ -4047,6 +4304,28 @@ func ComputeWebhookSignature(signingSecret string, timestampSeconds int64, paylo
 
 `ComputeWebhookSignature("segredo-de-exemplo", 1715792400, corpo)` devolve o `v1` esperado. O SDK usa o relógio atual, e o timestamp do vetor é antigo: para verificar o header completo em teste, passe uma tolerância enorme (por exemplo, `time.Duration(math.MaxInt64)`).
 
+#### Histórico, gráfico e reenvio
+
+```go
+func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)   // GET v1/webhook/audit
+func (c *WebhooksClient) GetDeliveryChart(ctx context.Context, req WebhookDeliveryChartRequest) ([]WebhookDeliveryChartPoint, error)       // GET v1/webhook/audit/chart
+func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)                                     // POST v1/webhook/audit/{id}/resend
+
+type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale pelo dia inteiro
+    InitialDate, FinalDate, ProposalID, SimulationID, ProposalNumber string
+    StatusCode *int
+}
+type ListWebhookDeliveriesRequest struct { WebhookDeliveryFilter; Page, PageSize int }
+type WebhookDeliveryChartRequest struct { WebhookDeliveryFilter }   // InitialDate e FinalDate obrigatórios
+type WebhookDelivery struct { ID, WebhookID string; Type WebhookType; TypeRaw, Request, Response string; StatusCode *int; CreatedAt string }
+type WebhookDeliveryChartPoint struct { Label string; SuccessCount, ErrorCount int }
+type WebhookResendResult struct { StatusCode *int; Response string }
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ### Exemplo
 
 (Fonte: `examples/go/webhooks.go`)
@@ -4081,6 +4360,8 @@ if err != nil { // *WebhookSignatureError: assinatura, segredo, timestamp ou id_
 - `ParseWebhookEventUnverified` existe só para testes. Em produção, verifique antes.
 - Troque o `sync.Map` do exemplo por Redis ou banco com expiração; ele só vale para uma instância.
 - Webhooks de staging e de produção são separados. Veja security.md.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Regras para integrar com o Credicarro em Go, com o SDK `twila-credicarro-go-sdk`, sem expor credenciais nem dados pessoais.

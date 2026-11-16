@@ -87,7 +87,7 @@ CHAVE=$(uuidgen)   # gere antes e guarde: repita a MESMA operação com a mesma 
 
 Gere a chave uma vez por operação, numa variável, **antes** do comando — nunca `$(uuidgen)` dentro do `curl`, que gera uma chave nova a cada repetição. As rotas de webhook, dados do veículo e conta de recebimento não usam o header.
 
-Quando repetir: só `408`, `429` (respeitando `Retry-After`), `500`, `502`, `503`, `504`, timeout ou falha de rede — nunca outros `4xx` — e só em operações seguras: `GET`, `POST` com a mesma `Idempotency-Key`, dados do veículo, conta de recebimento e `PUT`/`DELETE` de webhook. **Não repita** `POST /v1/webhook` (cadastraria outro webhook) nem `POST /v1/customer/unified` sem chave: liste os webhooks ou consulte o cadastro antes de tentar de novo.
+Quando repetir: só `408`, `429` (respeitando `Retry-After`), `500`, `502`, `503`, `504`, timeout ou falha de rede — nunca outros `4xx` — e só em operações seguras: `GET`, `POST` com a mesma `Idempotency-Key`, dados do veículo, conta de recebimento e `PUT`/`DELETE` de webhook. **Não repita** `POST /v1/webhook` (cadastraria outro webhook), `POST /v1/webhook/audit/{id}/resend` (dispararia o webhook de novo) nem `POST /v1/customer/unified` sem chave: liste os webhooks ou consulte o cadastro antes de tentar de novo.
 
 ---
 
@@ -187,6 +187,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 Resposta: `{"opcoes_por_prazo": [{"prazo": 36, "valor_minimo_refinanciavel": 5000, "valor_maximo_refinanciavel": 35720}, ...]}`.
 
 Sem prazos para o veículo, as duas faixas retornam `422` `Simulation.Terms.Unavailable`.
+
+**Retornos de comissão da loja (opcional)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v2/proposal/simulation/commission-returns?cnpjLoja=11222333000181" | jq
+```
+Resposta: `{"retornos_comissao": [{"tipo": "Financing", "alvo": "Store", "retorno_minimo": 0, "retorno_maximo": 6, "permite_taxa_padrao": true}, ...]}`. Lista vazia: a loja não tem retorno configurado. Para usar, envie `"retornoComissao"` (inteiro) nas simulações abaixo, dentro da faixa do mesmo `tipo` com `alvo` `Store`. Fora da faixa: `422` `Store.CommissionReturn.OutOfRange`; sem faixa configurada: `422` `Store.CommissionReturn.NotConfigured`. Sem o campo, vale a taxa padrão.
 
 **Simular financiamento**
 ```bash
@@ -380,6 +387,27 @@ curl -s -o /dev/null -w '%{http_code}\n' -X PUT "$CREDICARRO_BASE_URL/v1/webhook
 curl -s -o /dev/null -w '%{http_code}\n' -X DELETE "$CREDICARRO_BASE_URL/v1/webhook/WEBHOOK_ID" \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+**Histórico de envios (paginado; filtros opcionais)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v1/webhook/audit?data_inicial=2026-11-01&data_final=2026-11-07&status_http=500&pagina_inicial=1&limite=10" \
+  | jq '{pagina, itens: [.itens[] | {id_auditoria, tipo, status_http, data_criacao}]}'
+```
+Filtros: `data_inicial`, `data_final` (data sem horário vale pelo dia inteiro), `id_proposta`, `id_simulacao`, `numero_proposta`, `status_http`. Cada item traz também `requisicao` e `resposta` (corpos completos, com dados pessoais): não os exiba inteiros no chat.
+
+**Gráfico de envios (período obrigatório, até 31 dias)**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$CREDICARRO_BASE_URL/v1/webhook/audit/chart?data_inicial=2026-11-01&data_final=2026-11-07" | jq
+```
+Resposta: `[{"rotulo": "01", "sucessos": 42, "erros": 0}, ...]`, no horário de Brasília (`"10m"` até 1 hora, `"14h"` até 1 dia, `"05"` acima disso).
+
+**Reenviar um envio** (sem corpo; peça confirmação ao usuário antes — dispara o webhook de novo)
+```bash
+curl -s -X POST "$CREDICARRO_BASE_URL/v1/webhook/audit/ID_AUDITORIA/resend" -H "Authorization: Bearer $TOKEN" | jq '{status_http}'
+```
+Resposta `200`: `{"status_http": 200, "resposta": "..."}` (`status_http` nulo quando a URL não respondeu). **Não repita** em caso de falha: confira o histórico antes. `404` `Webhook.Audit.NotFound`: envio inexistente ou de outro parceiro. O reenvio chega com `Idempotency-Key` nova (`{id_mensagem}:{id_webhook}:{id_tentativa}`).
 
 Cada notificação é um `POST` JSON assinado com `X-CrediCarro-Signature: t={unix},v1={hex}` (HMAC-SHA256 de `"{t}.{corpo bruto}"` com o `segredo_assinatura`). Para conferir uma assinatura recebida:
 

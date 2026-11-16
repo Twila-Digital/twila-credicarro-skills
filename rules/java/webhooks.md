@@ -66,6 +66,25 @@ Vetor de teste da documentação (a verificação do SDK precisa aceitá-lo):
 
 O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe uma tolerância longa: `CredicarroWebhookEvent.parse(corpo, "t=1715792400,v1=db66...8df2", "segredo-de-exemplo", Duration.ofDays(100000))` devolve o evento com `APPROVED`. O `t` do cabeçalho de produção é validado; nunca use `parseUnverified` num endpoint.
 
+### Histórico, gráfico e reenvio
+
+```java
+PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);   // GET v1/webhook/audit (listDeliveries() sem filtros)
+List<WebhookDeliveryChartPoint> getDeliveryChart(WebhookDeliveryFilter filter);                   // GET v1/webhook/audit/chart
+WebhookResendResult resend(UUID deliveryId);                                                      // POST v1/webhook/audit/{id}/resend
+
+@Value @Builder(toBuilder = true) public class WebhookDeliveryFilter {
+    OffsetDateTime initialDate; OffsetDateTime finalDate; UUID proposalId; UUID simulationId; String proposalNumber; Integer statusCode;
+}
+@Value public class WebhookDelivery { UUID id; UUID webhookId; WebhookType type; String request; String response; Integer statusCode; OffsetDateTime createdAt; }
+@Value public class WebhookDeliveryChartPoint { String label; int successCount; int errorCount; }
+@Value public class WebhookResendResult { Integer statusCode; String response; }
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ## Exemplo
 
 (Fonte: `examples/java/webhooks.java`)
@@ -103,3 +122,5 @@ O endpoint rejeita `Content-Length` acima de 1 MiB (`413`), confere o `Authoriza
 - Cadastro: a `url` precisa ser HTTPS pública (sem localhost, IP privado, usuário/senha ou fragmento): `422 Organization.Webhook.InvalidEndpoint` (`CredicarroBusinessRuleException`). `credential` é obrigatória em BASIC e JWT; senão `400 Validation.Field.Required`. Pode haver mais de um webhook por tipo.
 - `update` troca `type`, `url` e `status`, mas não a autenticação. Para trocá-la, exclua e cadastre outro (e guarde o novo segredo). Erros: `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - A listagem não devolve credencial nem segredo.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
