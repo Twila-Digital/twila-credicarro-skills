@@ -25,7 +25,7 @@ Para **integração por código**, leia o arquivo do módulo e da linguagem:
 - **Customers** (cadastro unificado, dados pessoais, endereço, ocupação e renda): dotnet / java / node / python / php / go
 - **Simulations** (faixas, retornos de comissão, simulação de financiamento e refinanciamento, consulta, listagem, rotas `/v1`): dotnet / java / node / python / php / go
 - **Proposals** (criar, consultar, listar, ações pendentes, documentos, dados do veículo, conta de recebimento, rotas `/v1`): dotnet / java / node / python / php / go
-- **Webhooks** (cadastrar, listar, editar, excluir, histórico, gráfico e reenvio de envios, verificar assinatura, endpoint de recebimento): dotnet / java / node / python / php / go
+- **Webhooks** (cadastrar, listar, editar, excluir, histórico e reenvio de envios, verificar assinatura, endpoint de recebimento): dotnet / java / node / python / php / go
 - **Security** (credenciais, logs, LGPD, webhooks, resiliência): dotnet / java / node / python / php / go
 
 Ferramentas de apoio:
@@ -659,13 +659,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 Filtros: `data_inicial`, `data_final` (data sem horário vale pelo dia inteiro), `id_proposta`, `id_simulacao`, `numero_proposta`, `status_http`. Cada item traz também `requisicao` e `resposta` (corpos completos, com dados pessoais): não os exiba inteiros no chat.
 
-**Gráfico de envios (período obrigatório, até 31 dias)**
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$CREDICARRO_BASE_URL/v1/webhook/audit/chart?data_inicial=2026-11-01&data_final=2026-11-07" | jq
-```
-Resposta: `[{"rotulo": "01", "sucessos": 42, "erros": 0}, ...]`, no horário de Brasília (`"10m"` até 1 hora, `"14h"` até 1 dia, `"05"` acima disso).
-
 **Reenviar um envio** (sem corpo; peça confirmação ao usuário antes — dispara o webhook de novo)
 ```bash
 curl -s -X POST "$CREDICARRO_BASE_URL/v1/webhook/audit/ID_AUDITORIA/resend" -H "Authorization: Bearer $TOKEN" | jq '{status_http}'
@@ -1148,22 +1141,19 @@ public static class CredicarroWebhookEvent   // namespace Credicarro.Webhooks
 
 O SDK usa o relógio atual, e o timestamp do vetor é antigo: para testar, passe `tolerance: TimeSpan.MaxValue`.
 
-#### Histórico, gráfico e reenvio
+#### Histórico e reenvio
 
 ```csharp
 Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);  // GET v1/webhook/audit
-Task<IReadOnlyList<WebhookDeliveryChartPoint>> GetDeliveryChartAsync(WebhookDeliveryFilter filter, CancellationToken cancellationToken = default);               // GET v1/webhook/audit/chart
 Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);                                                         // POST v1/webhook/audit/{id}/resend
 
 public sealed record WebhookDeliveryFilter(DateTimeOffset? InitialDate = null, DateTimeOffset? FinalDate = null, Guid? ProposalId = null,
     Guid? SimulationId = null, string? ProposalNumber = null, int? StatusCode = null);
 public sealed record WebhookDelivery(Guid Id, Guid? WebhookId, WebhookType Type, string Request, string Response, int? StatusCode, DateTimeOffset CreatedAt);
-public sealed record WebhookDeliveryChartPoint(string Label, int SuccessCount, int ErrorCount);
 public sealed record WebhookResendResult(int? StatusCode, string Response);
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ### Exemplo
@@ -1201,7 +1191,7 @@ var evt = CredicarroWebhookEvent.ParseUnverified(rawBody);   // já verificado a
 - Troque o `ConcurrentDictionary` do exemplo por Redis ou banco com expiração; ele só vale para uma instância.
 - Webhooks de staging e de produção são separados. Veja security.md.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Regras para integrar com o Credicarro em .NET, com o SDK `Twila.Credicarro`, sem expor credenciais nem dados pessoais.
@@ -1787,23 +1777,20 @@ Vetor de teste da documentação (a verificação do SDK precisa aceitá-lo):
 
 O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe uma tolerância longa: `CredicarroWebhookEvent.parse(corpo, "t=1715792400,v1=db66...8df2", "segredo-de-exemplo", Duration.ofDays(100000))` devolve o evento com `APPROVED`. O `t` do cabeçalho de produção é validado; nunca use `parseUnverified` num endpoint.
 
-#### Histórico, gráfico e reenvio
+#### Histórico e reenvio
 
 ```java
 PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);   // GET v1/webhook/audit (listDeliveries() sem filtros)
-List<WebhookDeliveryChartPoint> getDeliveryChart(WebhookDeliveryFilter filter);                   // GET v1/webhook/audit/chart
 WebhookResendResult resend(UUID deliveryId);                                                      // POST v1/webhook/audit/{id}/resend
 
 @Value @Builder(toBuilder = true) public class WebhookDeliveryFilter {
     OffsetDateTime initialDate; OffsetDateTime finalDate; UUID proposalId; UUID simulationId; String proposalNumber; Integer statusCode;
 }
 @Value public class WebhookDelivery { UUID id; UUID webhookId; WebhookType type; String request; String response; Integer statusCode; OffsetDateTime createdAt; }
-@Value public class WebhookDeliveryChartPoint { String label; int successCount; int errorCount; }
 @Value public class WebhookResendResult { Integer statusCode; String response; }
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ### Exemplo
@@ -1844,7 +1831,7 @@ O endpoint rejeita `Content-Length` acima de 1 MiB (`413`), confere o `Authoriza
 - `update` troca `type`, `url` e `status`, mas não a autenticação. Para trocá-la, exclua e cadastre outro (e guarde o novo segredo). Erros: `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - A listagem não devolve credencial nem segredo.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro em Java usando o SDK. Valem para o `CredicarroClient` (client) e para o endpoint de webhook (webhooks).
@@ -2410,11 +2397,10 @@ getPendingActions(event: ProposalWebhookEvent): PendingAction[];
 - **Ordem do endpoint:** corpo é `Buffer`? → `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
-#### Histórico, gráfico e reenvio
+#### Histórico e reenvio
 
 ```typescript
 listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;  // GET v1/webhook/audit
-getDeliveryChart(request: WebhookDeliveryChartRequest): Promise<WebhookDeliveryChartPoint[]>;  // GET v1/webhook/audit/chart
 resend(deliveryId: string): Promise<WebhookResendResult>;                                     // POST v1/webhook/audit/{id}/resend
 
 interface WebhookDeliveryFilter {   // datas: string ISO ('2026-11-05' = dia inteiro) ou Date (enviada em UTC)
@@ -2422,14 +2408,11 @@ interface WebhookDeliveryFilter {   // datas: string ISO ('2026-11-05' = dia int
   proposalId?: string; simulationId?: string; proposalNumber?: string; statusCode?: number;
 }
 interface ListWebhookDeliveriesRequest extends WebhookDeliveryFilter { page?: number; pageSize?: number }
-interface WebhookDeliveryChartRequest extends WebhookDeliveryFilter { initialDate: string | Date; finalDate: string | Date }
 interface WebhookDelivery { id: string; webhookId?: string; type: WebhookType; request: string; response: string; statusCode?: number; createdAt: string }
-interface WebhookDeliveryChartPoint { label: string; successCount: number; errorCount: number }
 interface WebhookResendResult { statusCode?: number; response: string }
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ### Exemplo
@@ -2474,7 +2457,7 @@ app.post('/webhooks/credicarro', express.raw({ type: '*/*', limit: '1mb' }), asy
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro usando o SDK `@twila/credicarro`.
@@ -3067,23 +3050,19 @@ parse_webhook_payload(raw_body) -> ProposalWebhookEvent        # SEM verificar a
 - **Ordem do endpoint:** `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
-#### Histórico, gráfico e reenvio
+#### Histórico e reenvio
 
 ```python
 def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...  # GET v1/webhook/audit
-def get_delivery_chart(self, request: WebhookDeliveryChartRequest) -> list[WebhookDeliveryChartPoint]: ...            # GET v1/webhook/audit/chart
 def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...                                                  # POST v1/webhook/audit/{id}/resend
 
 # Datas: str ISO, date (dia inteiro) ou datetime (sem fuso: -03:00)
 class ListWebhookDeliveriesRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code; page = 1; page_size = 10
-class WebhookDeliveryChartRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code   # período obrigatório
 class WebhookDelivery: id: str; type: WebhookType; request: str; response: str; created_at: Optional[datetime]; webhook_id: Optional[str]; status_code: Optional[int]
-class WebhookDeliveryChartPoint: label: str; success_count: int; error_count: int
 class WebhookResendResult: response: str; status_code: Optional[int]
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ### Exemplo
@@ -3135,7 +3114,7 @@ def credicarro_webhook():
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro usando o SDK `twila-credicarro`.
@@ -3685,23 +3664,20 @@ Vetor de teste da documentação (a verificação do SDK precisa aceitá-lo):
 
 O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe o relógio: `CredicarroWebhookEvent::verifySignature($corpo, 't=1715792400,v1=db66...8df2', 'segredo-de-exemplo', 300, 1715792400)` devolve `true`.
 
-#### Histórico, gráfico e reenvio
+#### Histórico e reenvio
 
 ```php
 public function listDeliveries(?WebhookDeliveryFilter $filter = null, ?ListRequest $paging = null): PagedResult;  // GET v1/webhook/audit (WebhookDelivery)
-public function getDeliveryChart(WebhookDeliveryFilter $filter): array;   // GET v1/webhook/audit/chart (WebhookDeliveryChartPoint[])
 public function resend(string $deliveryId): WebhookResendResult;          // POST v1/webhook/audit/{id}/resend
 
 // Datas em texto ISO: '2026-11-05' vale pelo dia inteiro
 new WebhookDeliveryFilter(?string $initialDate = null, ?string $finalDate = null, ?string $proposalId = null,
     ?string $simulationId = null, ?string $proposalNumber = null, ?int $statusCode = null);
 final class WebhookDelivery { public $id; public $webhookId; public $type; public $typeRaw; public $request; public $response; public $statusCode; public $createdAt; }
-final class WebhookDeliveryChartPoint { public $label; public $successCount; public $errorCount; }
 final class WebhookResendResult { public $statusCode; public $response; }
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ### Exemplo
@@ -3741,7 +3717,7 @@ Configuração do endpoint:
 - `update` troca `type`, `url` e `status`, mas não a autenticação. Para trocá-la, exclua e cadastre outro (e guarde o novo segredo). Erros: `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - A listagem não devolve credencial nem segredo.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Boas práticas para integrar com o Credicarro em PHP usando o SDK. Valem para o `CredicarroClient` (client) e para o endpoint de webhook (webhooks).
@@ -4304,11 +4280,10 @@ func ComputeWebhookSignature(signingSecret string, timestampSeconds int64, paylo
 
 `ComputeWebhookSignature("segredo-de-exemplo", 1715792400, corpo)` devolve o `v1` esperado. O SDK usa o relógio atual, e o timestamp do vetor é antigo: para verificar o header completo em teste, passe uma tolerância enorme (por exemplo, `time.Duration(math.MaxInt64)`).
 
-#### Histórico, gráfico e reenvio
+#### Histórico e reenvio
 
 ```go
 func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)   // GET v1/webhook/audit
-func (c *WebhooksClient) GetDeliveryChart(ctx context.Context, req WebhookDeliveryChartRequest) ([]WebhookDeliveryChartPoint, error)       // GET v1/webhook/audit/chart
 func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)                                     // POST v1/webhook/audit/{id}/resend
 
 type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale pelo dia inteiro
@@ -4316,14 +4291,11 @@ type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale p
     StatusCode *int
 }
 type ListWebhookDeliveriesRequest struct { WebhookDeliveryFilter; Page, PageSize int }
-type WebhookDeliveryChartRequest struct { WebhookDeliveryFilter }   // InitialDate e FinalDate obrigatórios
 type WebhookDelivery struct { ID, WebhookID string; Type WebhookType; TypeRaw, Request, Response string; StatusCode *int; CreatedAt string }
-type WebhookDeliveryChartPoint struct { Label string; SuccessCount, ErrorCount int }
 type WebhookResendResult struct { StatusCode *int; Response string }
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ### Exemplo
@@ -4361,7 +4333,7 @@ if err != nil { // *WebhookSignatureError: assinatura, segredo, timestamp ou id_
 - Troque o `sync.Map` do exemplo por Redis ou banco com expiração; ele só vale para uma instância.
 - Webhooks de staging e de produção são separados. Veja security.md.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
 ### Security
 
 Regras para integrar com o Credicarro em Go, com o SDK `twila-credicarro-go-sdk`, sem expor credenciais nem dados pessoais.

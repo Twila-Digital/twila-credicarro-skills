@@ -71,23 +71,19 @@ parse_webhook_payload(raw_body) -> ProposalWebhookEvent        # SEM verificar a
 - **Ordem do endpoint:** `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
-### Histórico, gráfico e reenvio
+### Histórico e reenvio
 
 ```python
 def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...  # GET v1/webhook/audit
-def get_delivery_chart(self, request: WebhookDeliveryChartRequest) -> list[WebhookDeliveryChartPoint]: ...            # GET v1/webhook/audit/chart
 def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...                                                  # POST v1/webhook/audit/{id}/resend
 
 # Datas: str ISO, date (dia inteiro) ou datetime (sem fuso: -03:00)
 class ListWebhookDeliveriesRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code; page = 1; page_size = 10
-class WebhookDeliveryChartRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code   # período obrigatório
 class WebhookDelivery: id: str; type: WebhookType; request: str; response: str; created_at: Optional[datetime]; webhook_id: Optional[str]; status_code: Optional[int]
-class WebhookDeliveryChartPoint: label: str; success_count: int; error_count: int
 class WebhookResendResult: response: str; status_code: Optional[int]
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ## Exemplo
@@ -139,4 +135,4 @@ def credicarro_webhook():
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).

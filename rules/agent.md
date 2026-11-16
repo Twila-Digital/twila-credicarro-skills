@@ -396,13 +396,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 Filtros: `data_inicial`, `data_final` (data sem horário vale pelo dia inteiro), `id_proposta`, `id_simulacao`, `numero_proposta`, `status_http`. Cada item traz também `requisicao` e `resposta` (corpos completos, com dados pessoais): não os exiba inteiros no chat.
 
-**Gráfico de envios (período obrigatório, até 31 dias)**
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$CREDICARRO_BASE_URL/v1/webhook/audit/chart?data_inicial=2026-11-01&data_final=2026-11-07" | jq
-```
-Resposta: `[{"rotulo": "01", "sucessos": 42, "erros": 0}, ...]`, no horário de Brasília (`"10m"` até 1 hora, `"14h"` até 1 dia, `"05"` acima disso).
-
 **Reenviar um envio** (sem corpo; peça confirmação ao usuário antes — dispara o webhook de novo)
 ```bash
 curl -s -X POST "$CREDICARRO_BASE_URL/v1/webhook/audit/ID_AUDITORIA/resend" -H "Authorization: Bearer $TOKEN" | jq '{status_http}'

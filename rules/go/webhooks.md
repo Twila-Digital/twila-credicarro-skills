@@ -74,11 +74,10 @@ func ComputeWebhookSignature(signingSecret string, timestampSeconds int64, paylo
 
 `ComputeWebhookSignature("segredo-de-exemplo", 1715792400, corpo)` devolve o `v1` esperado. O SDK usa o relógio atual, e o timestamp do vetor é antigo: para verificar o header completo em teste, passe uma tolerância enorme (por exemplo, `time.Duration(math.MaxInt64)`).
 
-### Histórico, gráfico e reenvio
+### Histórico e reenvio
 
 ```go
 func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)   // GET v1/webhook/audit
-func (c *WebhooksClient) GetDeliveryChart(ctx context.Context, req WebhookDeliveryChartRequest) ([]WebhookDeliveryChartPoint, error)       // GET v1/webhook/audit/chart
 func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)                                     // POST v1/webhook/audit/{id}/resend
 
 type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale pelo dia inteiro
@@ -86,14 +85,11 @@ type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale p
     StatusCode *int
 }
 type ListWebhookDeliveriesRequest struct { WebhookDeliveryFilter; Page, PageSize int }
-type WebhookDeliveryChartRequest struct { WebhookDeliveryFilter }   // InitialDate e FinalDate obrigatórios
 type WebhookDelivery struct { ID, WebhookID string; Type WebhookType; TypeRaw, Request, Response string; StatusCode *int; CreatedAt string }
-type WebhookDeliveryChartPoint struct { Label string; SuccessCount, ErrorCount int }
 type WebhookResendResult struct { StatusCode *int; Response string }
 ```
 
 - O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
-- O gráfico exige o período (até 31 dias) e conta sucessos e erros por intervalo no horário de Brasília: rótulo `"10m"` até 1 hora, `"14h"` até 1 dia e `"05"` acima disso. Intervalos sem envios vêm com zero.
 - O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
 
 ## Exemplo
@@ -131,4 +127,4 @@ if err != nil { // *WebhookSignatureError: assinatura, segredo, timestamp ou id_
 - Troque o `sync.Map` do exemplo por Redis ou banco com expiração; ele só vale para uma instância.
 - Webhooks de staging e de produção são separados. Veja [security.md](security.md).
 - **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
-- Histórico e gráfico: `400 Organization.Webhook.Audit.DateRangeRequired` (gráfico sem período), `.DateRangeTooLarge` (mais de 31 dias), `.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
