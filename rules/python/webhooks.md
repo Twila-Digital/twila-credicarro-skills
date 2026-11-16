@@ -73,11 +73,12 @@ parse_webhook_payload(raw_body) -> ProposalWebhookEvent        # SEM verificar a
 
 ### Histórico e reenvio
 
-```python
-def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...  # GET v1/webhook/audit
-def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...                                                  # POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-# Datas: str ISO, date (dia inteiro) ou datetime (sem fuso: -03:00)
+```python
+def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...
+def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...
+
 class ListWebhookDeliveriesRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code; page = 1; page_size = 10
 class WebhookDelivery: id: str; type: WebhookType; request: str; response: str; created_at: Optional[datetime]; webhook_id: Optional[str]; status_code: Optional[int]
 class WebhookResendResult: response: str; status_code: Optional[int]

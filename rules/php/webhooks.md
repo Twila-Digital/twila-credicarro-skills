@@ -65,11 +65,12 @@ O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe o rel
 
 ### Histórico e reenvio
 
-```php
-public function listDeliveries(?WebhookDeliveryFilter $filter = null, ?ListRequest $paging = null): PagedResult;  // GET v1/webhook/audit (WebhookDelivery)
-public function resend(string $deliveryId): WebhookResendResult;          // POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-// Datas em texto ISO: '2026-11-05' vale pelo dia inteiro
+```php
+public function listDeliveries(?WebhookDeliveryFilter $filter = null, ?ListRequest $paging = null): PagedResult;
+public function resend(string $deliveryId): WebhookResendResult;
+
 new WebhookDeliveryFilter(?string $initialDate = null, ?string $finalDate = null, ?string $proposalId = null,
     ?string $simulationId = null, ?string $proposalNumber = null, ?int $statusCode = null);
 final class WebhookDelivery { public $id; public $webhookId; public $type; public $typeRaw; public $request; public $response; public $statusCode; public $createdAt; }

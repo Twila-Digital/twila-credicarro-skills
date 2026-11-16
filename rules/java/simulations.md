@@ -79,17 +79,19 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 
 ### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```java
-// GET v2/proposal/simulation/commission-returns
-List<CommissionReturn> getCommissionReturns(String storeCnpj);   // vazio se não houver retorno
+List<CommissionReturn> getCommissionReturns(String storeCnpj);
 
 @Value public class CommissionReturn {
-    SimulationType type;                 // FINANCING | REFINANCING
-    CommissionReturnTarget target;       // STORE | ORGANIZATION | UNKNOWN
+    SimulationType type;
+    CommissionReturnTarget target;
     int minimumReturn; int maximumReturn; boolean allowsDefaultRate;
 }
-// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): .commissionReturn(Integer) no builder
-// As requisições V1 não têm commissionReturn; null não é enviado.
+
+CreateFinancingSimulationRequest.builder().storeCnpj(loja).commissionReturn(2).build();
+CreateRefinancingSimulationRequest.builder().storeCnpj(loja).commissionReturn(2).build();
 ```
 
 - Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.

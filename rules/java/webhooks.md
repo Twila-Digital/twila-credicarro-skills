@@ -68,9 +68,11 @@ O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe uma t
 
 ### Histórico e reenvio
 
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
+
 ```java
-PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);   // GET v1/webhook/audit (listDeliveries() sem filtros)
-WebhookResendResult resend(UUID deliveryId);                                                      // POST v1/webhook/audit/{id}/resend
+PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);
+WebhookResendResult resend(UUID deliveryId);
 
 @Value @Builder(toBuilder = true) public class WebhookDeliveryFilter {
     OffsetDateTime initialDate; OffsetDateTime finalDate; UUID proposalId; UUID simulationId; String proposalNumber; Integer statusCode;

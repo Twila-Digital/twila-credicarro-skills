@@ -71,11 +71,13 @@ getPendingActions(event: ProposalWebhookEvent): PendingAction[];
 
 ### Histórico e reenvio
 
-```typescript
-listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;  // GET v1/webhook/audit
-resend(deliveryId: string): Promise<WebhookResendResult>;                                     // POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-interface WebhookDeliveryFilter {   // datas: string ISO ('2026-11-05' = dia inteiro) ou Date (enviada em UTC)
+```typescript
+listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;
+resend(deliveryId: string): Promise<WebhookResendResult>;
+
+interface WebhookDeliveryFilter {
   initialDate?: string | Date; finalDate?: string | Date;
   proposalId?: string; simulationId?: string; proposalNumber?: string; statusCode?: number;
 }

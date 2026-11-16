@@ -70,18 +70,20 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 
 ### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```go
-// GET v2/proposal/simulation/commission-returns
 func (c *SimulationsClient) GetCommissionReturns(ctx context.Context, storeCnpj string) ([]CommissionReturn, error)
 
 type CommissionReturn struct {
-    Type SimulationType; TypeRaw string                 // Financing | Refinancing
-    Target CommissionReturnTarget; TargetRaw string     // CommissionReturnTargetStore | ...Organization | ...Unknown
+    Type SimulationType; TypeRaw string
+    Target CommissionReturnTarget; TargetRaw string
     MinimumReturn, MaximumReturn int
     AllowsDefaultRate bool
 }
-// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): CommissionReturn *int (nil não é enviado)
-// As requisições V1 não têm CommissionReturn.
+
+type CreateFinancingSimulationRequest struct { CommissionReturn *int }
+type CreateRefinancingSimulationRequest struct { CommissionReturn *int }
 ```
 
 - Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.

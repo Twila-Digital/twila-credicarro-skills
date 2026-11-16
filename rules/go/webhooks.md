@@ -76,11 +76,13 @@ func ComputeWebhookSignature(signingSecret string, timestampSeconds int64, paylo
 
 ### Histórico e reenvio
 
-```go
-func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)   // GET v1/webhook/audit
-func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)                                     // POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale pelo dia inteiro
+```go
+func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)
+func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)
+
+type WebhookDeliveryFilter struct {
     InitialDate, FinalDate, ProposalID, SimulationID, ProposalNumber string
     StatusCode *int
 }

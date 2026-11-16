@@ -82,19 +82,21 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 
 ### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```python
-# GET v2/proposal/simulation/commission-returns
-def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...   # [] se não houver retorno
+def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...
 
 class CommissionReturn:
-    type: SimulationType                # FINANCING | REFINANCING
-    target: CommissionReturnTarget      # STORE | ORGANIZATION | UNKNOWN
+    type: SimulationType
+    target: CommissionReturnTarget
     minimum_return: int; maximum_return: int; allows_default_rate: bool
-# CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commission_return: Optional[int] = None
-# As requisições V1 não têm commission_return.
 
 faixa = next((f for f in client.simulations.get_commission_returns(loja)
               if f.type == SimulationType.FINANCING and f.target == CommissionReturnTarget.STORE), None)
+
+class CreateFinancingSimulationRequest: ...; commission_return: Optional[int] = None
+class CreateRefinancingSimulationRequest: ...; commission_return: Optional[int] = None
 ```
 
 - Consulte as faixas antes de simular e envie `commission_return` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.

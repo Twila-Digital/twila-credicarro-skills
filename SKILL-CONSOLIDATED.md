@@ -939,15 +939,16 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 
 #### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```csharp
-// GET v2/proposal/simulation/commission-returns
 Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default);
 
 public sealed record CommissionReturn(SimulationType Type, CommissionReturnTarget Target, int MinimumReturn, int MaximumReturn, bool AllowsDefaultRate);
 public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
-// CreateFinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
-// CreateRefinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
-// As requisições V1 não têm CommissionReturn; null não é enviado.
+
+public sealed record CreateFinancingSimulationRequest(string Cpf, string LicensePlate, decimal VehicleAmount, decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj, int? CommissionReturn = null);
+public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj, int? CommissionReturn = null);
 ```
 
 - Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
@@ -1143,9 +1144,11 @@ O SDK usa o relógio atual, e o timestamp do vetor é antigo: para testar, passe
 
 #### Histórico e reenvio
 
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
+
 ```csharp
-Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);  // GET v1/webhook/audit
-Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);                                                         // POST v1/webhook/audit/{id}/resend
+Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);
+Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);
 
 public sealed record WebhookDeliveryFilter(DateTimeOffset? InitialDate = null, DateTimeOffset? FinalDate = null, Guid? ProposalId = null,
     Guid? SimulationId = null, string? ProposalNumber = null, int? StatusCode = null);
@@ -1545,17 +1548,19 @@ public class Simulation { // GET v1/proposal/simulation/{id}
 
 #### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```java
-// GET v2/proposal/simulation/commission-returns
-List<CommissionReturn> getCommissionReturns(String storeCnpj);   // vazio se não houver retorno
+List<CommissionReturn> getCommissionReturns(String storeCnpj);
 
 @Value public class CommissionReturn {
-    SimulationType type;                 // FINANCING | REFINANCING
-    CommissionReturnTarget target;       // STORE | ORGANIZATION | UNKNOWN
+    SimulationType type;
+    CommissionReturnTarget target;
     int minimumReturn; int maximumReturn; boolean allowsDefaultRate;
 }
-// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): .commissionReturn(Integer) no builder
-// As requisições V1 não têm commissionReturn; null não é enviado.
+
+CreateFinancingSimulationRequest.builder().storeCnpj(loja).commissionReturn(2).build();
+CreateRefinancingSimulationRequest.builder().storeCnpj(loja).commissionReturn(2).build();
 ```
 
 - Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
@@ -1779,9 +1784,11 @@ O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe uma t
 
 #### Histórico e reenvio
 
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
+
 ```java
-PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);   // GET v1/webhook/audit (listDeliveries() sem filtros)
-WebhookResendResult resend(UUID deliveryId);                                                      // POST v1/webhook/audit/{id}/resend
+PagedResult<WebhookDelivery> listDeliveries(WebhookDeliveryFilter filter, ListRequest paging);
+WebhookResendResult resend(UUID deliveryId);
 
 @Value @Builder(toBuilder = true) public class WebhookDeliveryFilter {
     OffsetDateTime initialDate; OffsetDateTime finalDate; UUID proposalId; UUID simulationId; String proposalNumber; Integer statusCode;
@@ -2160,21 +2167,23 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 
 #### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```typescript
-// GET v2/proposal/simulation/commission-returns
-getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;   // [] se a loja não tiver retorno configurado
+getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;
 
 interface CommissionReturn {
-  type: SimulationType;               // Financing | Refinancing
-  target: CommissionReturnTarget;     // Store | Organization | Unknown
+  type: SimulationType;
+  target: CommissionReturnTarget;
   minimumReturn: number; maximumReturn: number; allowsDefaultRate: boolean;
 }
-// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commissionReturn?: number
-// As requisições V1 não têm commissionReturn.
 
 const faixa = (await client.simulations.getCommissionReturns(loja))
   .find((f) => f.type === SimulationType.Financing && f.target === CommissionReturnTarget.Store);
 await client.simulations.createFinancing({ ...simulacao, commissionReturn: faixa?.maximumReturn });
+
+interface CreateFinancingSimulationRequest { commissionReturn?: number }
+interface CreateRefinancingSimulationRequest { commissionReturn?: number }
 ```
 
 - Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
@@ -2399,11 +2408,13 @@ getPendingActions(event: ProposalWebhookEvent): PendingAction[];
 
 #### Histórico e reenvio
 
-```typescript
-listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;  // GET v1/webhook/audit
-resend(deliveryId: string): Promise<WebhookResendResult>;                                     // POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-interface WebhookDeliveryFilter {   // datas: string ISO ('2026-11-05' = dia inteiro) ou Date (enviada em UTC)
+```typescript
+listDeliveries(request?: ListWebhookDeliveriesRequest): Promise<PagedResult<WebhookDelivery>>;
+resend(deliveryId: string): Promise<WebhookResendResult>;
+
+interface WebhookDeliveryFilter {
   initialDate?: string | Date; finalDate?: string | Date;
   proposalId?: string; simulationId?: string; proposalNumber?: string; statusCode?: number;
 }
@@ -2793,19 +2804,21 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 
 #### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```python
-# GET v2/proposal/simulation/commission-returns
-def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...   # [] se não houver retorno
+def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...
 
 class CommissionReturn:
-    type: SimulationType                # FINANCING | REFINANCING
-    target: CommissionReturnTarget      # STORE | ORGANIZATION | UNKNOWN
+    type: SimulationType
+    target: CommissionReturnTarget
     minimum_return: int; maximum_return: int; allows_default_rate: bool
-# CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commission_return: Optional[int] = None
-# As requisições V1 não têm commission_return.
 
 faixa = next((f for f in client.simulations.get_commission_returns(loja)
               if f.type == SimulationType.FINANCING and f.target == CommissionReturnTarget.STORE), None)
+
+class CreateFinancingSimulationRequest: ...; commission_return: Optional[int] = None
+class CreateRefinancingSimulationRequest: ...; commission_return: Optional[int] = None
 ```
 
 - Consulte as faixas antes de simular e envie `commission_return` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
@@ -3052,11 +3065,12 @@ parse_webhook_payload(raw_body) -> ProposalWebhookEvent        # SEM verificar a
 
 #### Histórico e reenvio
 
-```python
-def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...  # GET v1/webhook/audit
-def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...                                                  # POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-# Datas: str ISO, date (dia inteiro) ou datetime (sem fuso: -03:00)
+```python
+def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...
+def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...
+
 class ListWebhookDeliveriesRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code; page = 1; page_size = 10
 class WebhookDelivery: id: str; type: WebhookType; request: str; response: str; created_at: Optional[datetime]; webhook_id: Optional[str]; status_code: Optional[int]
 class WebhookResendResult: response: str; status_code: Optional[int]
@@ -3427,20 +3441,21 @@ final class Simulation { // GET v1/proposal/simulation/{id}
 
 #### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```php
-// GET v2/proposal/simulation/commission-returns
-public function getCommissionReturns(string $storeCnpj): array;   // CommissionReturn[]; [] se não houver retorno
+public function getCommissionReturns(string $storeCnpj): array;
 
 final class CommissionReturn {
-    public $type;            // SimulationType::FINANCING | REFINANCING
+    public $type;
     public $typeRaw;
-    public $target;          // CommissionReturnTarget::STORE | ORGANIZATION | UNKNOWN
+    public $target;
     public $targetRaw;
     public $minimumReturn; public $maximumReturn; public $allowsDefaultRate;
 }
-// CreateFinancingSimulationRequest(..., ?string $storeCnpj = null, ?int $commissionReturn = null)
-// CreateRefinancingSimulationRequest(..., ?string $storeCnpj = null, ?int $commissionReturn = null)
-// Só enviado na v2; null não é enviado.
+
+new CreateFinancingSimulationRequest($cpf, $placa, $valorVeiculo, $entrada, $uf, $zeroKm, $storeCnpj, $commissionReturn);
+new CreateRefinancingSimulationRequest($cpf, $placa, $valorSolicitado, $storeCnpj, $commissionReturn);
 ```
 
 - Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
@@ -3666,11 +3681,12 @@ O `t` do vetor é antigo: a tolerância padrão o rejeita. Em teste, passe o rel
 
 #### Histórico e reenvio
 
-```php
-public function listDeliveries(?WebhookDeliveryFilter $filter = null, ?ListRequest $paging = null): PagedResult;  // GET v1/webhook/audit (WebhookDelivery)
-public function resend(string $deliveryId): WebhookResendResult;          // POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-// Datas em texto ISO: '2026-11-05' vale pelo dia inteiro
+```php
+public function listDeliveries(?WebhookDeliveryFilter $filter = null, ?ListRequest $paging = null): PagedResult;
+public function resend(string $deliveryId): WebhookResendResult;
+
 new WebhookDeliveryFilter(?string $initialDate = null, ?string $finalDate = null, ?string $proposalId = null,
     ?string $simulationId = null, ?string $proposalNumber = null, ?int $statusCode = null);
 final class WebhookDelivery { public $id; public $webhookId; public $type; public $typeRaw; public $request; public $response; public $statusCode; public $createdAt; }
@@ -4036,18 +4052,20 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 
 #### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```go
-// GET v2/proposal/simulation/commission-returns
 func (c *SimulationsClient) GetCommissionReturns(ctx context.Context, storeCnpj string) ([]CommissionReturn, error)
 
 type CommissionReturn struct {
-    Type SimulationType; TypeRaw string                 // Financing | Refinancing
-    Target CommissionReturnTarget; TargetRaw string     // CommissionReturnTargetStore | ...Organization | ...Unknown
+    Type SimulationType; TypeRaw string
+    Target CommissionReturnTarget; TargetRaw string
     MinimumReturn, MaximumReturn int
     AllowsDefaultRate bool
 }
-// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): CommissionReturn *int (nil não é enviado)
-// As requisições V1 não têm CommissionReturn.
+
+type CreateFinancingSimulationRequest struct { CommissionReturn *int }
+type CreateRefinancingSimulationRequest struct { CommissionReturn *int }
 ```
 
 - Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
@@ -4282,11 +4300,13 @@ func ComputeWebhookSignature(signingSecret string, timestampSeconds int64, paylo
 
 #### Histórico e reenvio
 
-```go
-func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)   // GET v1/webhook/audit
-func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)                                     // POST v1/webhook/audit/{id}/resend
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
 
-type WebhookDeliveryFilter struct {   // datas em texto ISO: "2026-11-05" vale pelo dia inteiro
+```go
+func (c *WebhooksClient) ListDeliveries(ctx context.Context, req *ListWebhookDeliveriesRequest) (*PagedResult[WebhookDelivery], error)
+func (c *WebhooksClient) Resend(ctx context.Context, deliveryID string) (*WebhookResendResult, error)
+
+type WebhookDeliveryFilter struct {
     InitialDate, FinalDate, ProposalID, SimulationID, ProposalNumber string
     StatusCode *int
 }

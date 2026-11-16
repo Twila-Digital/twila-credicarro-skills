@@ -74,20 +74,21 @@ final class Simulation { // GET v1/proposal/simulation/{id}
 
 ### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```php
-// GET v2/proposal/simulation/commission-returns
-public function getCommissionReturns(string $storeCnpj): array;   // CommissionReturn[]; [] se não houver retorno
+public function getCommissionReturns(string $storeCnpj): array;
 
 final class CommissionReturn {
-    public $type;            // SimulationType::FINANCING | REFINANCING
+    public $type;
     public $typeRaw;
-    public $target;          // CommissionReturnTarget::STORE | ORGANIZATION | UNKNOWN
+    public $target;
     public $targetRaw;
     public $minimumReturn; public $maximumReturn; public $allowsDefaultRate;
 }
-// CreateFinancingSimulationRequest(..., ?string $storeCnpj = null, ?int $commissionReturn = null)
-// CreateRefinancingSimulationRequest(..., ?string $storeCnpj = null, ?int $commissionReturn = null)
-// Só enviado na v2; null não é enviado.
+
+new CreateFinancingSimulationRequest($cpf, $placa, $valorVeiculo, $entrada, $uf, $zeroKm, $storeCnpj, $commissionReturn);
+new CreateRefinancingSimulationRequest($cpf, $placa, $valorSolicitado, $storeCnpj, $commissionReturn);
 ```
 
 - Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.

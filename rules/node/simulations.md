@@ -79,21 +79,23 @@ interface V1SimulationsClient {  // client.v1.simulations: rotas v1, sem storeCn
 
 ### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```typescript
-// GET v2/proposal/simulation/commission-returns
-getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;   // [] se a loja não tiver retorno configurado
+getCommissionReturns(storeCnpj: string): Promise<CommissionReturn[]>;
 
 interface CommissionReturn {
-  type: SimulationType;               // Financing | Refinancing
-  target: CommissionReturnTarget;     // Store | Organization | Unknown
+  type: SimulationType;
+  target: CommissionReturnTarget;
   minimumReturn: number; maximumReturn: number; allowsDefaultRate: boolean;
 }
-// CreateFinancingSimulationRequest / CreateRefinancingSimulationRequest (v2): commissionReturn?: number
-// As requisições V1 não têm commissionReturn.
 
 const faixa = (await client.simulations.getCommissionReturns(loja))
   .find((f) => f.type === SimulationType.Financing && f.target === CommissionReturnTarget.Store);
 await client.simulations.createFinancing({ ...simulacao, commissionReturn: faixa?.maximumReturn });
+
+interface CreateFinancingSimulationRequest { commissionReturn?: number }
+interface CreateRefinancingSimulationRequest { commissionReturn?: number }
 ```
 
 - Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.

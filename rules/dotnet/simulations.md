@@ -66,15 +66,16 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 
 ### Retorno de comissão
 
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
 ```csharp
-// GET v2/proposal/simulation/commission-returns
 Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default);
 
 public sealed record CommissionReturn(SimulationType Type, CommissionReturnTarget Target, int MinimumReturn, int MaximumReturn, bool AllowsDefaultRate);
 public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
-// CreateFinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
-// CreateRefinancingSimulationRequest(..., string StoreCnpj, int? CommissionReturn = null)
-// As requisições V1 não têm CommissionReturn; null não é enviado.
+
+public sealed record CreateFinancingSimulationRequest(string Cpf, string LicensePlate, decimal VehicleAmount, decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj, int? CommissionReturn = null);
+public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj, int? CommissionReturn = null);
 ```
 
 - Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.

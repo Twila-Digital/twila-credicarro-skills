@@ -69,9 +69,11 @@ O SDK usa o relógio atual, e o timestamp do vetor é antigo: para testar, passe
 
 ### Histórico e reenvio
 
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
+
 ```csharp
-Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);  // GET v1/webhook/audit
-Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);                                                         // POST v1/webhook/audit/{id}/resend
+Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);
+Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);
 
 public sealed record WebhookDeliveryFilter(DateTimeOffset? InitialDate = null, DateTimeOffset? FinalDate = null, Guid? ProposalId = null,
     Guid? SimulationId = null, string? ProposalNumber = null, int? StatusCode = null);
