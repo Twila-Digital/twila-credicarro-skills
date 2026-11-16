@@ -64,6 +64,23 @@ public interface IV1SimulationsClient   // client.V1.Simulations
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Não gere a sua.
 - `ListAsync` e `GetAsync` devolvem o retrato completo de simulações já criadas (`Simulation`). `Type` vem do nome e cai em `SimulationType.Unknown` para valor novo.
 
+### Retorno de comissão
+
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
+```csharp
+Task<IReadOnlyList<CommissionReturn>> GetCommissionReturnsAsync(string storeCnpj, CancellationToken cancellationToken = default);
+
+public sealed record CommissionReturn(SimulationType Type, CommissionReturnTarget Target, int MinimumReturn, int MaximumReturn, bool AllowsDefaultRate);
+public enum CommissionReturnTarget { Store = 1, Organization = 2, Unknown = -1 }
+
+public sealed record CreateFinancingSimulationRequest(string Cpf, string LicensePlate, decimal VehicleAmount, decimal DownPayment, string State, bool IsZeroKm, string StoreCnpj, int? CommissionReturn = null);
+public sealed record CreateRefinancingSimulationRequest(string Cpf, string LicensePlate, decimal RequestedAmount, string StoreCnpj, int? CommissionReturn = null);
+```
+
+- Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `CommissionReturn`.
+
 ## Exemplo
 
 (Fonte: `examples/dotnet/simulations.cs`)
@@ -84,3 +101,4 @@ var chosen = options.OrderBy(o => o.InstallmentAmount).First();
 - `CredicarroValidationException` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `ApproximateDailyRetention` é `null` quando não se aplica: mantenha o campo nulo.
 - Em `Simulation`, `Transaction`, `Interest`, `Cet`, `Iof` e `Vehicle` podem vir `null`; teste antes de acessar.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

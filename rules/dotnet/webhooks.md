@@ -67,6 +67,23 @@ public static class CredicarroWebhookEvent   // namespace Credicarro.Webhooks
 
 O SDK usa o relógio atual, e o timestamp do vetor é antigo: para testar, passe `tolerance: TimeSpan.MaxValue`.
 
+### Histórico e reenvio
+
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
+
+```csharp
+Task<PagedResult<WebhookDelivery>> ListDeliveriesAsync(WebhookDeliveryFilter? filter = null, ListRequest? paging = null, CancellationToken cancellationToken = default);
+Task<WebhookResendResult> ResendAsync(Guid deliveryId, CancellationToken cancellationToken = default);
+
+public sealed record WebhookDeliveryFilter(DateTimeOffset? InitialDate = null, DateTimeOffset? FinalDate = null, Guid? ProposalId = null,
+    Guid? SimulationId = null, string? ProposalNumber = null, int? StatusCode = null);
+public sealed record WebhookDelivery(Guid Id, Guid? WebhookId, WebhookType Type, string Request, string Response, int? StatusCode, DateTimeOffset CreatedAt);
+public sealed record WebhookResendResult(int? StatusCode, string Response);
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ## Exemplo
 
 (Fonte: `examples/dotnet/webhooks.cs`)
@@ -101,3 +118,5 @@ var evt = CredicarroWebhookEvent.ParseUnverified(rawBody);   // já verificado a
 - `ProposalWebhookEvent.GetPendingActions()` aplica a mesma regra de `ProposalDetails.GetPendingActions()` ao evento **detalhado**; o evento simples não traz etapas (lista vazia), então consulte a proposta. O `ToString` do evento mascara CPF e motivo da recusa.
 - Troque o `ConcurrentDictionary` do exemplo por Redis ou banco com expiração; ele só vale para uma instância.
 - Webhooks de staging e de produção são separados. Veja [security.md](security.md).
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).

@@ -68,6 +68,27 @@ func (c *V1SimulationsClient) CreateRefinancing(ctx context.Context, req V1Creat
 - **Idempotência:** o SDK envia a `Idempotency-Key` sozinho e a repete em todas as tentativas. Passe `WithIdempotencyKey` só se você persiste uma chave por operação.
 - `Get` e `List` devolvem o retrato completo de simulações já criadas. `Type` vem do nome e cai em `SimulationTypeUnknown` para valor novo (o texto original fica em `TypeRaw`).
 
+### Retorno de comissão
+
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
+```go
+func (c *SimulationsClient) GetCommissionReturns(ctx context.Context, storeCnpj string) ([]CommissionReturn, error)
+
+type CommissionReturn struct {
+    Type SimulationType; TypeRaw string
+    Target CommissionReturnTarget; TargetRaw string
+    MinimumReturn, MaximumReturn int
+    AllowsDefaultRate bool
+}
+
+type CreateFinancingSimulationRequest struct { CommissionReturn *int }
+type CreateRefinancingSimulationRequest struct { CommissionReturn *int }
+```
+
+- Consulte as faixas antes de simular e envie `CommissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `CommissionReturn`.
+
 ## Exemplo
 
 (Fonte: `examples/go/simulations.go`)
@@ -88,3 +109,4 @@ options, err := client.Simulations.CreateFinancing(ctx, credicarro.CreateFinanci
 - `*ValidationError` (`400`): `Validation.DownPayment.NotBelowVehicleAmount`, `Validation.LicensePlate.Invalid`, `Validation.Cnpj.Invalid`.
 - `simulationID` que não é UUID e `licensePlate` ou `storeCnpj` vazios voltam como `*ConfigurationError`, sem chamar a API.
 - `ApproximateDailyRetention` é `nil` quando não se aplica: teste antes de usar. Em `Simulation.Vehicle`, `Year`, `Value` e `IsZeroKm` também são ponteiros.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

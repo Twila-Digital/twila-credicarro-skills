@@ -80,6 +80,28 @@ class V1SimulationsClient:  # client.v1.simulations: rotas v1, sem store_cnpj
 - `get` e `list` devolvem `Simulation` (consulta), formato diferente de `SimulationOption`. `list` usa paginação explícita (`PagedResult[Simulation]`).
 - Mostre o CET (`monthly_cet`, `annual_cet`) ao cliente: é o número certo para comparar opções.
 
+### Retorno de comissão
+
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
+```python
+def get_commission_returns(self, store_cnpj: str) -> list[CommissionReturn]: ...
+
+class CommissionReturn:
+    type: SimulationType
+    target: CommissionReturnTarget
+    minimum_return: int; maximum_return: int; allows_default_rate: bool
+
+faixa = next((f for f in client.simulations.get_commission_returns(loja)
+              if f.type == SimulationType.FINANCING and f.target == CommissionReturnTarget.STORE), None)
+
+class CreateFinancingSimulationRequest: ...; commission_return: Optional[int] = None
+class CreateRefinancingSimulationRequest: ...; commission_return: Optional[int] = None
+```
+
+- Consulte as faixas antes de simular e envie `commission_return` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commission_return`.
+
 ## Exemplo
 (Fonte: `examples/python/simulations.py`)
 
@@ -112,3 +134,4 @@ opcoes_v1 = client.v1.simulations.create_refinancing(
 - `409 Proposal.SimulationIdempotencyConflict` indica chave reusada com outro corpo; como o SDK gera a chave por chamada, só aparece se você desligar `disable_automatic_idempotency_key` e reaproveitar chaves por conta própria.
 - `Simulation.type` pode vir como `SimulationType.UNKNOWN` se a API ganhar um tipo novo; não lance erro.
 - Campos de `Simulation` podem ser `None`: não assuma que `vehicle`, `iof` ou `cet` estão sempre presentes.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

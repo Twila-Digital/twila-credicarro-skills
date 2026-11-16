@@ -72,6 +72,28 @@ final class Simulation { // GET v1/proposal/simulation/{id}
 - `get($simulationId)` e `list(...)` consultam simulações já feitas (`Simulation`, com veículo, CET, IOF e juros).
 - As rotas **v1** (`$client->v1->simulations`) não usam o CNPJ da loja (mesmos objetos de requisição, sem `storeCnpj`). Para integrações novas, use a v2.
 
+### Retorno de comissão
+
+Rota: `GET v2/proposal/simulation/commission-returns` (lista vazia quando a loja não tem retorno configurado). As requisições v1 não têm o campo de retorno de comissão, e o valor nulo não é enviado.
+
+```php
+public function getCommissionReturns(string $storeCnpj): array;
+
+final class CommissionReturn {
+    public $type;
+    public $typeRaw;
+    public $target;
+    public $targetRaw;
+    public $minimumReturn; public $maximumReturn; public $allowsDefaultRate;
+}
+
+new CreateFinancingSimulationRequest($cpf, $placa, $valorVeiculo, $entrada, $uf, $zeroKm, $storeCnpj, $commissionReturn);
+new CreateRefinancingSimulationRequest($cpf, $placa, $valorSolicitado, $storeCnpj, $commissionReturn);
+```
+
+- Consulte as faixas antes de simular e envie `commissionReturn` dentro da faixa da modalidade (`Financing` ou `Refinancing`) com alvo `Store`; é a faixa que a API valida. Sem o campo, a simulação usa a taxa padrão.
+- Lista vazia significa loja sem retorno configurado: não envie `commissionReturn`.
+
 ## Exemplo
 
 (Fonte: `examples/php/simulations.php`)
@@ -101,3 +123,4 @@ foreach ($opcoes as $opcao) {
 - Use um `simulationId` de simulações feitas pela integração. Uma simulação fora de loja gera `Simulation.Access.NotFromStore` ao criar a proposta.
 - Mostre `monthlyCet` e `annualCet` ao cliente: o CET reúne juros, tarifas e impostos.
 - Valores monetários e percentuais são `float`, em reais; para cálculos, use centavos inteiros ou `bcmath`. `approximateDailyRetention` pode ser `null`; `createdAt` é uma `string` ISO-8601.
+- `retornoComissao` fora da faixa da loja: `422 Store.CommissionReturn.OutOfRange` (o detalhe traz o mínimo e o máximo); loja sem retorno configurado para a modalidade: `422 Store.CommissionReturn.NotConfigured`; valor negativo: `400 Validation.Amount.MustNotBeNegative`.

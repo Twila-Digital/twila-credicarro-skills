@@ -71,6 +71,22 @@ parse_webhook_payload(raw_body) -> ProposalWebhookEvent        # SEM verificar a
 - **Ordem do endpoint:** `Authorization` → assinatura → leitura do corpo (`400` se ilegível) → deduplicação → **enfileirar** → só então `2xx`.
 - **Variáveis:** `CREDICARRO_WEBHOOK_SECRET` obrigatória (sem ela a aplicação não sobe) e `CREDICARRO_WEBHOOK_AUTHORIZATION` com o valor completo esperado do header (`Basic ...` ou `Bearer ...`) quando o webhook usa autenticação 2 ou 3.
 
+### Histórico e reenvio
+
+Rotas: `GET v1/webhook/audit` (histórico) e `POST v1/webhook/audit/{id}/resend` (reenvio). Datas sem horário (`2026-11-05`) valem pelo dia inteiro.
+
+```python
+def list_deliveries(self, request: Optional[ListWebhookDeliveriesRequest] = None) -> PagedResult[WebhookDelivery]: ...
+def resend(self, delivery_id: Identifier) -> WebhookResendResult: ...
+
+class ListWebhookDeliveriesRequest: initial_date; final_date; proposal_id; simulation_id; proposal_number; status_code; page = 1; page_size = 10
+class WebhookDelivery: id: str; type: WebhookType; request: str; response: str; created_at: Optional[datetime]; webhook_id: Optional[str]; status_code: Optional[int]
+class WebhookResendResult: response: str; status_code: Optional[int]
+```
+
+- O histórico registra cada envio, inclusive as retentativas automáticas, com o corpo enviado, a resposta da URL e o status HTTP (vazio/nulo quando a URL não respondeu). Os corpos podem ter dados pessoais: não registre em log.
+- O reenvio manda **o mesmo corpo** de novo, assinado de novo, e entra no histórico como um item novo. É uma única tentativa: o SDK **não** o repete (repetir dispararia o webhook duas vezes) e espera até 30 s pela resposta da URL.
+
 ## Exemplo
 (Fonte: `examples/python/webhooks.py`)
 
@@ -119,3 +135,5 @@ def credicarro_webhook():
 - Para trocar a autenticação de um webhook, exclua-o e cadastre outro (`update` não altera a autenticação, e o novo cadastro traz novo `signing_secret`).
 - Erros do cadastro: `422 Organization.Webhook.InvalidEndpoint` (URL precisa ser HTTPS pública), `404 Webhook.Registration.NotFound`, `409 Organization.Webhook.ConcurrencyConflict` (tente de novo).
 - Staging e produção têm webhooks e segredos separados.
+- **Reenvio manual:** chega com uma `Idempotency-Key` **nova** (`{id_mensagem}:{id_webhook}:{id_tentativa}`). Para tratá-lo como a mesma notificação, deduplique pelo prefixo `{id_mensagem}:{id_webhook}`.
+- Histórico: `400 Organization.Webhook.Audit.InvalidDateRange`, `.InvalidProposalId`, `.InvalidSimulationId`, `.InvalidProposalNumber` (mais de 50 caracteres), `.InvalidStatusCode` (fora de 100 a 599). Reenvio: `404 Webhook.Audit.NotFound` (envio inexistente, de outro parceiro ou que não pode mais ser reenviado) e `503 Organization.Webhook.Resend.DependencyUnavailable` (tente de novo depois de conferir o histórico).
